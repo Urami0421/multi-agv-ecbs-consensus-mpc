@@ -1,0 +1,115 @@
+<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="neo_mp400">
+    <pose>0 0 0 0 0 0</pose>
+    <self_collide>false</self_collide>
+    <link name="chassis">
+      <inertial>
+        <pose>0 0 0.21 0 0 0</pose>
+        <mass>30</mass>
+        <inertia><ixx>1.71402</ixx><iyy>0.8856</iyy><izz>2.5725</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <!-- The CAD body spans 0.590 x 0.5525 m after its upstream yaw rotation. -->
+      <collision name="body_collision">
+        <pose>0 0.00225 0.22 0 0 0</pose>
+        <geometry><box><size>0.59 0.5525 0.384</size></box></geometry>
+      </collision>
+      <sensor name="body_contact" type="contact">
+        <always_on>true</always_on>
+        <update_rate>20</update_rate>
+        <visualize>false</visualize>
+        <contact>
+          <collision>body_collision</collision>
+        </contact>
+      </sensor>
+      <visual name="body">
+        <pose>0 0 0 0 0 1.57079632679</pose>
+        <geometry><mesh><uri>model://neo_mp400/meshes/MP-400-BODY.dae</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+      </visual>
+      <visual name="lidar_body">
+        <pose>0.244 0 0.261 1.57079632679 0 -3.14159265359</pose>
+        <geometry><mesh><uri>model://neo_mp400/meshes/SICK-S300.dae</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+      </visual>
+    </link>
+
+    <!-- Wheel and caster centers are raised by 2 mm to start without penetration. -->
+    <link name="left_wheel">
+      <pose>0 0.26 0.0765 0 0 0</pose>
+      <inertial>
+        <mass>1.82362</mass>
+        <inertia><ixx>0.00399743</ixx><iyy>0.00739240</iyy><izz>0.00399743</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <collision name="tire">
+        <pose>0 0 0 1.57079632679 0 0</pose>
+        <geometry><cylinder><radius>0.0765</radius><length>0.031</length></cylinder></geometry>
+        <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+      </collision>
+      <visual name="wheel">
+        <pose>0 0 0 0 0 1.57079632679</pose>
+        <geometry><mesh><uri>model://neo_mp400/meshes/MP-400-FIXED-WHEEL-LEFT.dae</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+      </visual>
+    </link>
+    <link name="right_wheel">
+      <pose>0 -0.26 0.0765 0 0 0</pose>
+      <inertial>
+        <mass>1.82362</mass>
+        <inertia><ixx>0.00399743</ixx><iyy>0.00739240</iyy><izz>0.00399743</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <collision name="tire">
+        <pose>0 0 0 1.57079632679 0 0</pose>
+        <geometry><cylinder><radius>0.0765</radius><length>0.031</length></cylinder></geometry>
+        <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+      </collision>
+      <visual name="wheel">
+        <pose>0 0 0 0 0 -1.57079632679</pose>
+        <geometry><mesh><uri>model://neo_mp400/meshes/MP-400-FIXED-WHEEL-RIGHT.dae</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+      </visual>
+    </link>
+    <joint name="left_wheel_joint" type="revolute">
+      <parent>chassis</parent><child>left_wheel</child>
+      <axis><xyz>0 1 0</xyz><limit><lower>-1e16</lower><upper>1e16</upper><effort>100</effort><velocity>30</velocity></limit></axis>
+    </joint>
+    <joint name="right_wheel_joint" type="revolute">
+      <parent>chassis</parent><child>right_wheel</child>
+      <axis><xyz>0 1 0</xyz><limit><lower>-1e16</lower><upper>1e16</upper><effort>100</effort><velocity>30</velocity></limit></axis>
+    </joint>
+
+    <link name="front_left_caster">
+      <pose>0.165 0.155 0.038 0 0 0</pose>
+      <inertial><mass>0.25</mass><inertia><ixx>0.0002</ixx><iyy>0.0002</iyy><izz>0.0002</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>
+      <collision name="support"><geometry><sphere><radius>0.038</radius></sphere></geometry><surface><friction><ode><mu>0.001</mu><mu2>0.001</mu2></ode></friction></surface></collision>
+      <visual name="caster"><pose>0 0 0 0 0 1.57079632679</pose><geometry><mesh><uri>model://neo_mp400/meshes/MP-400-CASTER-WHEEL.dae</uri><scale>0.001 0.001 0.001</scale></mesh></geometry></visual>
+    </link>
+    <link name="front_right_caster">
+      <pose>0.165 -0.155 0.038 0 0 0</pose>
+      <inertial><mass>0.25</mass><inertia><ixx>0.0002</ixx><iyy>0.0002</iyy><izz>0.0002</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>
+      <collision name="support"><geometry><sphere><radius>0.038</radius></sphere></geometry><surface><friction><ode><mu>0.001</mu><mu2>0.001</mu2></ode></friction></surface></collision>
+      <visual name="caster"><pose>0 0 0 0 0 1.57079632679</pose><geometry><mesh><uri>model://neo_mp400/meshes/MP-400-CASTER-WHEEL.dae</uri><scale>0.001 0.001 0.001</scale></mesh></geometry></visual>
+    </link>
+    <link name="back_left_caster">
+      <pose>-0.220 0.155 0.038 0 0 0</pose>
+      <inertial><mass>0.25</mass><inertia><ixx>0.0002</ixx><iyy>0.0002</iyy><izz>0.0002</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>
+      <collision name="support"><geometry><sphere><radius>0.038</radius></sphere></geometry><surface><friction><ode><mu>0.001</mu><mu2>0.001</mu2></ode></friction></surface></collision>
+      <visual name="caster"><pose>0 0 0 0 0 1.57079632679</pose><geometry><mesh><uri>model://neo_mp400/meshes/MP-400-CASTER-WHEEL.dae</uri><scale>0.001 0.001 0.001</scale></mesh></geometry></visual>
+    </link>
+    <link name="back_right_caster">
+      <pose>-0.220 -0.155 0.038 0 0 0</pose>
+      <inertial><mass>0.25</mass><inertia><ixx>0.0002</ixx><iyy>0.0002</iyy><izz>0.0002</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>
+      <collision name="support"><geometry><sphere><radius>0.038</radius></sphere></geometry><surface><friction><ode><mu>0.001</mu><mu2>0.001</mu2></ode></friction></surface></collision>
+      <visual name="caster"><pose>0 0 0 0 0 1.57079632679</pose><geometry><mesh><uri>model://neo_mp400/meshes/MP-400-CASTER-WHEEL.dae</uri><scale>0.001 0.001 0.001</scale></mesh></geometry></visual>
+    </link>
+    <joint name="front_left_caster_joint" type="fixed"><parent>chassis</parent><child>front_left_caster</child></joint>
+    <joint name="front_right_caster_joint" type="fixed"><parent>chassis</parent><child>front_right_caster</child></joint>
+    <joint name="back_left_caster_joint" type="fixed"><parent>chassis</parent><child>back_left_caster</child></joint>
+    <joint name="back_right_caster_joint" type="fixed"><parent>chassis</parent><child>back_right_caster</child></joint>
+
+    <!-- Default scoped topics follow each spawned model name: cmd_vel and odometry. -->
+    <plugin filename="ignition-gazebo-diff-drive-system" name="ignition::gazebo::systems::DiffDrive">
+      <left_joint>left_wheel_joint</left_joint><right_joint>right_wheel_joint</right_joint>
+      <wheel_separation>0.52</wheel_separation><wheel_radius>0.0765</wheel_radius>
+      <odom_publish_frequency>50</odom_publish_frequency>
+      <max_linear_acceleration>1.0</max_linear_acceleration>
+      <max_angular_acceleration>2.0</max_angular_acceleration>
+    </plugin>
+  </model>
+</sdf>

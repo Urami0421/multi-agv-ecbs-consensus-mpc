@@ -2,7 +2,7 @@
 __pycache__/
 build/
 devel/
-docs/
+.pytest_cache/
 python_motion_planning.egg-info/
 # local env files
 .env.local
@@ -44,6 +44,5 @@ logs/
 tmp/
 tmp*
 stats.txt
-tests/
 
 .claude

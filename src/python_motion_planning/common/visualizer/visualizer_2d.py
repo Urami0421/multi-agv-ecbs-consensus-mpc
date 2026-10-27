@@ -263,10 +263,21 @@ class Visualizer2D(BaseVisualizer):
             env_info_text.set_path_effects([path_effects.withStroke(linewidth=2, foreground='black')])
 
         prepare_frames = 5
+        active_patches = []
 
         def update(frame):
             nonlocal last_time
             nonlocal prepare_frames
+            nonlocal active_patches
+
+            for old_patch in active_patches:
+                if show_env_info and old_patch is env_info_text:
+                    continue
+                try:
+                    old_patch.remove()
+                except (ValueError, NotImplementedError):
+                    pass
+            active_patches = []
 
             patches = []
             actions = {}
@@ -330,7 +341,7 @@ class Visualizer2D(BaseVisualizer):
             if show_env_info:
                 step_count = env.step_count
                 sim_time = step_count * env.dt
-                rtf = env.dt / elapsed
+                rtf = env.dt / max(elapsed, 1e-6)
                 env_info_text.set_text(f"Step: {step_count}, Time: {sim_time:.3f}s, RTF: {rtf:.3f}")
                 patches.append(env_info_text)
 
@@ -339,6 +350,7 @@ class Visualizer2D(BaseVisualizer):
             if env.step_count < steps:
                 obs, rewards, dones, info = env.step(actions)
 
+            active_patches = list(patches)
             return patches
 
         self.ani = animation.FuncAnimation(

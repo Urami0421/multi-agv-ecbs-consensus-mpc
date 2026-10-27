@@ -75,11 +75,7 @@ class BSpline(BaseCurveGenerator):
         if self.spline_mode == "interpolation":
             control_pts = self._interpolation(points_2d, params, knot)
         else:
-            control_pts = self._approximation(points_2d, params, knot)
-            h = len(control_pts)
-            new_points = [(control_pts[i][0], control_pts[i][1]) for i in range(h)]
-            params = self._param_selection(new_points)
-            knot = self._knot_generation(params, h)
+            control_pts = np.array(points_2d, dtype=float)
 
         curve = self._generate_curve(t, self.k, knot, control_pts)
         path = [(float(pt[0]), float(pt[1])) for pt in curve]

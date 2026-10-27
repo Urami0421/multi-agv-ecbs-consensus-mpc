@@ -8,7 +8,10 @@ import random
 from typing import Union, Dict, List, Tuple, Any
 
 import numpy as np
-import faiss
+try:
+    import faiss
+except ImportError:
+    faiss = None
 
 from python_motion_planning.common import BaseMap, Node, TYPES, Grid
 from python_motion_planning.path_planner import BasePathPlanner
@@ -52,7 +55,7 @@ class RRT(BasePathPlanner):
         self.max_sample_step = max_sample_step
         self.goal_sample_rate = goal_sample_rate
         self.discrete = discrete
-        self.use_faiss = use_faiss
+        self.use_faiss = bool(use_faiss and faiss is not None)
 
     def __str__(self) -> str:
         return "RRT"

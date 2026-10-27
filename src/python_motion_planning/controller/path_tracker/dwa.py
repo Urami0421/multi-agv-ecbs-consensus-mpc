@@ -196,8 +196,8 @@ class DWA(PathTracker):
         dist = np.linalg.norm(last_pose[:self.dim] - target_pose[:self.dim])
         orient = np.linalg.norm(Geometry.regularize_orient(last_pose[self.dim:] - target_pose[self.dim:]))
 
-        normalized_dist = dist / self.goal_dist_tol
-        normalized_orient = orient / self.goal_orient_tol
+        normalized_dist = max(float(dist / self.goal_dist_tol), self.eps)
+        normalized_orient = max(float(orient / self.goal_orient_tol), self.eps)
 
         dist_score = 0.5 * np.clip(1.0 / normalized_dist, 0.0, 1.0)     # normalized_dist > 1.0
         dist_score += 0.5 * np.clip(1.0 - normalized_dist, 0.0, 1.0)    # 0.0 <= normalized_dist <= 1.0

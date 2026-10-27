@@ -5,7 +5,10 @@
 """
 from typing import Union, Dict, List, Tuple, Any
 
-import faiss
+try:
+    import faiss
+except ImportError:
+    faiss = None
 
 from python_motion_planning.common import Node, Grid, TYPES
 from python_motion_planning.path_planner.sample_search.rrt import RRT

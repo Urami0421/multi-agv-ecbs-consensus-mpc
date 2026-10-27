@@ -22,7 +22,9 @@ dependencies = [
     "gymnasium",
     "faiss-cpu",
     "pyvista",
-    "pyvistaqt"
+    "pyvistaqt",
+    "pycollada",
+    "pillow"
 ]
 classifiers = [
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
@@ -31,7 +33,7 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/ai-winter/python_motion_planning"
+Repository = "https://github.com/Urami0421/multi-agv-ecbs-consensus-mpc"
 
 [tool.setuptools.packages.find]
 where = ["src"]

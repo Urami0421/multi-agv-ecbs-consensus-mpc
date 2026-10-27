@@ -94,7 +94,6 @@ class RPP(PurePursuit):
             v_prox = v_t * self.alpha * obs_dist / max(self.d_prox, self.eps)
         else:
             v_prox = v_t
-        v_prox = v_t
 
         # Take minimum regulated velocity (for safety)
         v_reg = min(v_curv, v_prox)

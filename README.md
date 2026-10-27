@@ -1,5 +1,31 @@
 
-# Introduction
+# Multi-AGV ECBS + Safe-Corridor $C^2$ B-Spline + Distributed Consensus-CBF-MPC
+
+<p align="center">
+  <b><a href="README.md">English</a> | <a href="README_zh.md">简体中文</a></b>
+</p>
+
+## 🚀 Project Overview / 项目简介（中英双语）
+
+### 🌐 English Summary
+> **Full-Stack Multi-AGV Space-Time Planning (`ECBS`), Safe-Corridor $C^2$ Trajectory Optimization (`BSpline`), and Distributed `Consensus-CBF-MPC` Control in a 3D + 2D Synchronized OpenGL Warehouse Digital Twin**:
+> This repository extends [`ai-winter/python_motion_planning`](https://github.com/ai-winter/python_motion_planning) with a complete 3-stage industrial fleet planning & control pipeline and a hardware-accelerated 3D/2D synchronized warehouse digital twin (`Visualizer3D` + UV-textured AWS RoboMaker 3D Shelves/Forklifts + 8-part Neobotix `MP-400` CAD AGVs) on a **72m × 44m, 12-Rack (`Rack-1..12`), 20-Intersection, 8-Bottleneck-Hazard (`H1..H8`), 8-AGV Multi-Stage (`Start -> Pickup -> Delivery`) Industrial Warehouse**:
+> 1. **Kinematic Turn-Penalized Two-Level Focal ECBS (`src/python_motion_planning/path_planner/graph_search/ecbs.py`) + Safe-Corridor Cubic $C^2$ B-Spline (`src/python_motion_planning/traj_optimizer/curve_generator/point_based/bspline.py`)** (*ECAI 2014 / IJCAI 2016*): Reduces low-level space-time state expansions by **84.0%** (`8,127 -> 1,302`), speeds up planning by **3.0x** (`102.9 ms -> 34.4 ms`), cuts 90° turns by **43.8%** (`48 -> 27`), and converts discrete grid detours around `H1..H8` into $C^2$-continuous smooth S-curves inside `TYPES.FREE` safe corridors.
+> 2. **Distributed Multi-Agent Velocity Consensus + Discrete-Time Control Barrier Function MPC (`src/python_motion_planning/controller/path_tracker/mpc.py`)** (*Proc. IEEE 2007 / IEEE TAC 2017*): Fills the upstream `MPC (Not migrated)` and `3D Controller Simulator (Not implemented)` gaps, achieving **0 collisions** (`min_dist = 1.16m > 2R = 0.88m`) and **100% (8/8) multi-stage mission completion** (`0.27m` mean terminal error) across 8 differential-drive AGVs, 8 S-curve aisle bottlenecks, and 20 intersections where `PurePursuit` (`4` collisions), `RPP` (`2` collisions), and `DWA` (`0.0%` completion, trapped in local minima at narrow bottlenecks) all fail.
+> 3. **Reproduce in one command**: `python scripts/run_multi_agv_ecbs_consensus_demo.py`
+
+### 🇨🇳 中文简介
+> **工业级多 AGV 集群“全局时空规划（`ECBS`）$\rightarrow$ 安全走廊 $C^2$ B 样条平滑（`BSpline`）$\rightarrow$ 分布式速度一致性与控制屏障预测控制（`Consensus-CBF-MPC`）”全栈架构与 3D/2D 实时联动仓储数字孪生**：
+> 本项目基于开源运动规划框架 [`ai-winter/python_motion_planning`](https://github.com/ai-winter/python_motion_planning) 进行深度扩展，面向 **72m × 44m、12 座货架岛（`Rack-1..12`）、20 个正交交叉路口、8 处巷道半幅占道瓶颈（`H1..H8`）、8 台差速驱动 Neobotix `MP-400` AGV 两阶段拣选与出库（`Start -> Pickup -> Delivery`）** 复合压力场景，构建了完整的“规划—平滑—控制—数字孪生”闭环系统：
+> 1. **运动学转向惩罚两级焦点搜索（`ECBS`）+ 安全走廊三次 B 样条 $C^2$ 平滑（`BSpline`）**：引入冲突规避表（CAT）引导的两级焦点搜索（$w=1.08$）与可采纳转弯感知启发函数，相比标准精确 `CBS` 将**底层搜索状态数减少 84.0%（`8,127 -> 1,302`）、规划速度提升 3.0 倍（`102.9 ms -> 34.4 ms`）、车队 90° 急转弯削减 43.8%（`48 -> 27`）**；并通过 `TYPES.FREE` 安全走廊约束下的 Clamped 三次 B 样条生成曲率连续（$C^2$）的 S 型平滑换道轨迹。
+> 2. **分布式多智能体速度一致性 + 离散时间控制屏障函数预测控制（`Consensus-CBF-MPC`）**：补齐了原仓库缺失的 `MPC` 控制器与 `3D 控制器仿真器`（集成 AWS RoboMaker 全贴图 3D 货架/叉车、Neobotix `MP-400` 8 部件 CAD 模型及右下角 `1:1` 帧级同步 2D `ESDF` 雷达监控图），在 `PurePursuit`（4 次碰撞）、`RPP`（2 次碰撞）与 `DWA`（窄道局部极小值死锁 0% 完成）均失效的复合瓶颈场景下，实现 **全程 0 碰撞（最小车距 `1.16m > 2R = 0.88m`）、100%（8/8）任务达成、终点平均跟踪误差仅 `0.27m`**。
+> 3. **一键复现命令**：`python scripts/run_multi_agv_ecbs_consensus_demo.py` | **完整中文说明文档**：[`README_zh.md`](README_zh.md)
+
+![3D + 2D Synchronized Multi-AGV Warehouse Digital Twin (48 3D Shelves + 8 MP-400 AGVs + Live 2D ESDF Radar)](assets/multi_agv_consensus_mpc_3d.gif)
+![3D + 2D Synchronized Warehouse Digital Twin Keyframe Snapshot](assets/multi_agv_consensus_mpc_3d_snapshot.png)
+![3-Stage Progressive Pipeline: Standard CBS vs. Focal ECBS + Cubic BSpline vs. 3D Space-Time Corridors](assets/ecbs_vs_cbs_warehouse.png)
+![2D Multi-AGV ECBS + BSpline + Consensus-CBF-MPC Simulation](assets/multi_agv_consensus_mpc_2d.gif)
+![Quantitative Ablation Dashboard](assets/multi_agv_ablation_dashboard.png)
 
 `Python Motion Planning` repository provides the implementations of common `Motion planning` algorithms, including path planners on N-D grid, controllers for path-tracking, trajectory optimizers, a visualizer based on matplotlib and a toy physical simulator to test controllers.
 
@@ -69,6 +95,7 @@ Please refer to the Tutorials part of [online documentation](https://ai-winter.g
 **JPS**|![jps_2d.svg](assets/jps_2d.svg)|![jps_3d.png](assets/jps_3d.png)
 **Theta\***|![theta_star_2d.svg](assets/theta_star_2d.svg)|![theta_star_3d.png](assets/theta_star_3d.png)
 **Lazy Theta\***|![lazy_theta_star_2d.svg](assets/lazy_theta_star_2d.svg)|![lazy_theta_star_3d.png](assets/lazy_theta_star_3d.png)
+**CBS / ECBS (Multi-AGV)**|![ecbs_vs_cbs_warehouse.png](assets/ecbs_vs_cbs_warehouse.png)|Not implemented
 **D\***|Implemented in [V1.1.1](https://github.com/ai-winter/python_motion_planning/tree/v1.1.1), not migrated|Not implemented
 **LPA\***|Implemented in [V1.1.1](https://github.com/ai-winter/python_motion_planning/tree/v1.1.1), not migrated|Not implemented
 **D\* Lite**|Implemented in [V1.1.1](https://github.com/ai-winter/python_motion_planning/tree/v1.1.1), not migrated|Not implemented
@@ -110,7 +137,7 @@ In the following demos, the blue robot 1 is the `CircularRobot`, and the orange 
 | **DWA**     |![dwa_2d.gif](assets/dwa_2d.gif)|Not implemented
 | **RPP**     |![rpp_2d.gif](assets/rpp_2d.gif)|Not implemented
 | **LQR**     |Implemented in [V1.1.1](https://github.com/ai-winter/python_motion_planning/tree/v1.1.1), not migrated|Not implemented
-| **MPC**     |Implemented in [V1.1.1](https://github.com/ai-winter/python_motion_planning/tree/v1.1.1), not migrated|Not implemented
+| **MPC / Consensus-CBF-MPC** |![multi_agv_consensus_mpc_2d.gif](assets/multi_agv_consensus_mpc_2d.gif)|![multi_agv_consensus_mpc_3d.gif](assets/multi_agv_consensus_mpc_3d.gif)
 | **MPPI**    |Not implemented|Not implemented
 | **TEB**     |Not implemented|Not implemented
 | **Lattice** |Not implemented|Not implemented
