@@ -1,0 +1,49 @@
+.DS_Store
+__pycache__/
+build/
+devel/
+docs/
+python_motion_planning.egg-info/
+# local env files
+.env.local
+.env.*.local
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# tensorboard logs
+examples/runs/
+
+# model state dict files
+examples/models/*
+# some example models
+!examples/models/actor_best_example.pth
+!examples/models/critic_best_example.pth
+
+# Editor directories and files
+.idea
+.vscode
+.pypirc
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.pyc
+*.log
+
+# auto generated files
+site/ 
+dist/
+logs/
+
+# temporary files
+tmp/
+tmp*
+stats.txt
+tests/
+
+.claude

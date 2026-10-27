@@ -1,0 +1,246 @@
+theme:
+  name: material
+  language: en
+  palette:
+  - scheme: default
+    toggle:
+      icon: material/weather-night
+      name: change to dark mode
+  - scheme: slate
+    toggle:
+      icon: material/weather-sunny
+      name: change to light mode
+  features:
+  - announce.dismiss
+  - content.code.annotate
+  - content.code.copy
+  - content.code.select
+  - content.tabs.link
+  - content.tooltips
+  - header.autohide
+  - navigation.expand
+  - navigation.footer
+  - navigation.indexes
+  - navigation.instant
+  - navigation.instant.prefetch
+  - navigation.instant.progress
+  - navigation.prune
+  - navigation.sections
+  - navigation.tabs
+  - navigation.top
+  - navigation.tracking
+  - search.highlight
+  - search.share
+  - search.suggest
+  - toc.follow
+markdown_extensions:
+- admonition
+- def_list
+- footnotes
+- abbr
+- pymdownx.caret
+- pymdownx.mark
+- pymdownx.tilde
+- md_in_html
+- pymdownx.arithmatex:
+    generic: true
+- toc:
+    permalink: true
+    toc_depth: 3
+- pymdownx.highlight:
+    anchor_linenums: true
+    linenums: true
+    use_pygments: true
+    pygments_lang_class: true
+    auto_title: true
+    linenums_style: pymdownx-inline
+- pymdownx.betterem
+- pymdownx.caret
+- pymdownx.mark
+- pymdownx.tilde
+- pymdownx.keys
+- pymdownx.critic
+- pymdownx.details
+- pymdownx.inlinehilite
+- pymdownx.snippets
+- pymdownx.superfences
+- pymdownx.magiclink
+- pymdownx.smartsymbols
+- pymdownx.snippets
+- pymdownx.tasklist:
+    custom_checkbox: true
+- attr_list
+- pymdownx.emoji:
+    emoji_index: !!python/name:material.extensions.emoji.twemoji ''
+    emoji_generator: !!python/name:material.extensions.emoji.to_svg ''
+- pymdownx.superfences:
+    custom_fences:
+    - name: mermaid
+      class: mermaid
+      format: !!python/name:pymdownx.superfences.fence_code_format ''
+- pymdownx.tabbed:
+    alternate_style: true
+    combine_header_slug: true
+- pymdownx.tasklist:
+    custom_checkbox: true
+    clickable_checkbox: true
+- meta
+- tables
+extra_javascript:
+- https://cdn.jsdelivr.net/npm/mathjax@2/MathJax.js?config=TeX-AMS-MML_HTMLorMML
+site_name: Python-Motion-Planning
+site_description: Motion planning algorithms for Python.
+site_author: Wu Maojia, Yang Haodong
+site_url: http://localhost:8000
+use_directory_urls: false
+copyright: Copyright @ 2023-2026, Wu Maojia, Yang Haodong.
+repo_url: https://github.com/ai-winter/python_motion_planning/
+nav:
+- Home: index.md
+- Tutorials:
+  - 1 - 2D:
+    - 1.1 - Map:
+      - 1.1.1 - Grid: tutorials/2d/map/grid.md
+    - 1.2 - Path Planner:
+      - 1.2.1 - Graph Search: tutorials/2d/path_planner/graph_search.md
+      - 1.2.2 - Sample Search: tutorials/2d/path_planner/sample_search.md
+      - 1.2.3 - Hybrid Search: tutorials/2d/path_planner/hybrid_search.md
+    - 1.3 - Controller:
+      - 1.3.1 - Path Tracker: tutorials/2d/controller/path_tracker.md
+    - 1.4 - Trajectory Optimizer:
+      - 1.4.1 - Curve Generator: tutorials/2d/traj_optimizer/curve_generator.md
+  - 2 - 3D:
+    - 2.1 - Map:
+      - 2.1.1 - Grid: tutorials/3d/map/grid.md
+    - 2.2 - Path Planner:
+      - 2.2.1 - Graph Search: tutorials/3d/path_planner/graph_search.md
+      - 2.2.2 - Sample Search: tutorials/3d/path_planner/sample_search.md
+      - 2.2.3 - Hybrid Search: tutorials/3d/path_planner/hybrid_search.md
+- API Reference:
+  - common:
+    - env:
+      - map:
+        - base_map:
+          - BaseMap: api\common\env\map\base_map\BaseMap.md
+        - grid:
+          - GridTypeMap: api\common\env\map\grid\GridTypeMap.md
+          - Grid: api\common\env\map\grid\Grid.md
+      - node:
+        - Node: api\common\env\node\Node.md
+      - robot:
+        - base_robot:
+          - BaseRobot: api\common\env\robot\base_robot\BaseRobot.md
+        - circular_robot:
+          - CircularRobot: api\common\env\robot\circular_robot\CircularRobot.md
+        - diff_drive_robot:
+          - DiffDriveRobot: api\common\env\robot\diff_drive_robot\DiffDriveRobot.md
+      - types:
+        - TYPES: api\common\env\types\TYPES.md
+      - world:
+        - base_world:
+          - BaseWorld: api\common\env\world\base_world\BaseWorld.md
+        - toy_simulator:
+          - ToySimulator: api\common\env\world\toy_simulator\ToySimulator.md
+    - utils:
+      - child_tree:
+        - ChildTree: api\common\utils\child_tree\ChildTree.md
+      - frame_transformer:
+        - FrameTransformer: api\common\utils\frame_transformer\FrameTransformer.md
+      - geometry:
+        - Geometry: api\common\utils\geometry\Geometry.md
+    - visualizer:
+      - base_visualizer:
+        - BaseVisualizer: api\common\visualizer\base_visualizer\BaseVisualizer.md
+      - visualizer_2d:
+        - Visualizer2D: api\common\visualizer\visualizer_2d\Visualizer2D.md
+      - visualizer_3d:
+        - Visualizer3D: api\common\visualizer\visualizer_3d\Visualizer3D.md
+  - controller:
+    - base_controller:
+      - BaseController: api\controller\base_controller\BaseController.md
+    - path_tracker:
+      - apf:
+        - APF: api\controller\path_tracker\apf\APF.md
+      - dwa:
+        - DWA: api\controller\path_tracker\dwa\DWA.md
+      - path_tracker:
+        - PathTracker: api\controller\path_tracker\path_tracker\PathTracker.md
+      - pid:
+        - PID: api\controller\path_tracker\pid\PID.md
+      - pure_pursuit:
+        - PurePursuit: api\controller\path_tracker\pure_pursuit\PurePursuit.md
+      - rpp:
+        - RPP: api\controller\path_tracker\rpp\RPP.md
+    - random_controller:
+      - RandomController: api\controller\random_controller\RandomController.md
+  - path_planner:
+    - base_path_planner:
+      - BasePathPlanner: api\path_planner\base_path_planner\BasePathPlanner.md
+    - graph_search:
+      - a_star:
+        - AStar: api\path_planner\graph_search\a_star\AStar.md
+      - dijkstra:
+        - Dijkstra: api\path_planner\graph_search\dijkstra\Dijkstra.md
+      - gbfs:
+        - GBFS: api\path_planner\graph_search\gbfs\GBFS.md
+      - jps:
+        - JPS: api\path_planner\graph_search\jps\JPS.md
+      - lazy_theta_star:
+        - LazyThetaStar: api\path_planner\graph_search\lazy_theta_star\LazyThetaStar.md
+      - theta_star:
+        - ThetaStar: api\path_planner\graph_search\theta_star\ThetaStar.md
+    - hybrid_search:
+      - voronoi_planner:
+        - VoronoiPlanner: api\path_planner\hybrid_search\voronoi_planner\VoronoiPlanner.md
+    - sample_search:
+      - rrt:
+        - RRT: api\path_planner\sample_search\rrt\RRT.md
+      - rrt_connect:
+        - RRTConnect: api\path_planner\sample_search\rrt_connect\RRTConnect.md
+      - rrt_star:
+        - RRTStar: api\path_planner\sample_search\rrt_star\RRTStar.md
+  - traj_optimizer:
+    - base_curve_generator:
+      - BaseCurveGenerator: api\traj_optimizer\base_curve_generator\BaseCurveGenerator.md
+    - curve_generator:
+      - point_based:
+        - bspline:
+          - BSpline: api\traj_optimizer\curve_generator\point_based\bspline\BSpline.md
+        - cubic_spline:
+          - CubicSpline: api\traj_optimizer\curve_generator\point_based\cubic_spline\CubicSpline.md
+      - pose_based:
+        - bezier:
+          - Bezier: api\traj_optimizer\curve_generator\pose_based\bezier\Bezier.md
+        - dubins:
+          - Dubins: api\traj_optimizer\curve_generator\pose_based\dubins\Dubins.md
+        - polynomial:
+          - Polynomial: api\traj_optimizer\curve_generator\pose_based\polynomial\Polynomial.md
+        - reeds_shepp:
+          - ReedsShepp: api\traj_optimizer\curve_generator\pose_based\reeds_shepp\ReedsShepp.md
+plugins:
+- search
+- autorefs
+- mike:
+    alias_type: symlink
+    version_selector: true
+- mkdocstrings:
+    default_handler: python
+    handlers:
+      python:
+        paths:
+        - pykit_tools
+        options:
+          heading_level: 2
+          show_root_heading: true
+          show_symbol_type: true
+          show_symbol_type_toc: true
+          show_symbol_type_heading: true
+          show_source: true
+          show_submodules: true
+        selection:
+          docstring_style: google
+extra:
+  version:
+    provider: mike
+    default: latest
+    alias: true

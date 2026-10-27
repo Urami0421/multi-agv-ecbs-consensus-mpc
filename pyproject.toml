@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=43.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "python-motion-planning"
+version = "2.1"
+description = "Motion planning algorithms for Python"
+maintainers = [
+    {name = "Wu Maojia", email = "omige@mail.nwpu.edu.cn"},
+    {name = "Yang Haodong", email = "913982779@qq.com"}
+]
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.8"
+dependencies = [
+    "numpy",
+    "numba",
+    "scipy",
+    "matplotlib",
+    "osqp",
+    "gymnasium",
+    "faiss-cpu",
+    "pyvista",
+    "pyvistaqt"
+]
+classifiers = [
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+]
+
+[project.urls]
+Repository = "https://github.com/ai-winter/python_motion_planning"
+
+[tool.setuptools.packages.find]
+where = ["src"]
