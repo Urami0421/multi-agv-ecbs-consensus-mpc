@@ -387,7 +387,8 @@ class ECBS:
         start_state: LowLevelState = (start_pt, 0, initial_stage, -1)
 
         seq = itertools.count()
-        g_sign = -1.0 if self.w > 1.0 else 1.0
+        # Standard A* tie-breaking: prefer larger g (deeper progress toward goal) on equal f
+        g_sign = -1.0
         s0 = next(seq)
 
         # Active OPEN table: state -> (f_val, g_tie, hc_val, seq_id, g_val)
@@ -676,6 +677,7 @@ class ECBS:
                     "total_steps": total_steps,
                     "total_turns": total_turns,
                     "soc": current.cost,
+                    "cost": current.cost,
                     "lower_bound": global_lb,
                     "suboptimality_ratio": current.cost / max(global_lb, 1e-9),
                     "makespan": max((len(p) - 1 for p in current.paths.values()), default=0),
