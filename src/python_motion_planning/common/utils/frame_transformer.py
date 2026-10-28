@@ -6,7 +6,6 @@
 from typing import List, Tuple
 
 import numpy as np
-from gymnasium import spaces
 
 from .geometry import Geometry
 

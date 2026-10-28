@@ -5,8 +5,6 @@
 """
 from typing import List, Dict, Tuple, Optional
 import numpy as np
-import gymnasium as gym
-from gymnasium import spaces
 import math
 
 from python_motion_planning.common.utils.frame_transformer import FrameTransformer  

@@ -6,7 +6,10 @@
 from typing import List, Tuple
 
 import numpy as np
-from gymnasium import spaces
+try:
+    from gymnasium import spaces
+except ImportError:  # pragma: no cover - lightweight fallback when gymnasium is not installed
+    from python_motion_planning.common.env.world.base_world import spaces
 
 from python_motion_planning.common.env import Grid, TYPES, BaseRobot
 from python_motion_planning.common.utils.geometry import Geometry

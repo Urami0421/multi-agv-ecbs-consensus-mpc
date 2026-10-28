@@ -4,10 +4,31 @@
 @update: 2025.10.3
 """
 from typing import List, Dict, Tuple, Optional
-import numpy as np
-import gymnasium as gym
-from gymnasium import spaces
 import math
+import numpy as np
+
+try:
+    import gymnasium as gym
+    from gymnasium import spaces
+except ImportError:  # pragma: no cover - lightweight fallback when gymnasium is not installed
+    class _Box:
+        def __init__(self, low, high, shape=None, dtype=float):
+            self.low = np.asarray(low, dtype=dtype)
+            self.high = np.asarray(high, dtype=dtype)
+            self.shape = tuple(shape) if shape is not None else self.low.shape
+            self.dtype = dtype
+
+    class _Spaces:
+        Space = _Box
+        Box = _Box
+
+    class _Gym:
+        class Env:
+            def reset(self, seed=None):
+                pass
+
+    gym = _Gym()
+    spaces = _Spaces()
 
 from python_motion_planning.common.env.types import TYPES
 from python_motion_planning.common.env.map import Grid
