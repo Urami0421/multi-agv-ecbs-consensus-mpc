@@ -409,7 +409,8 @@ class SafeCorridorBSplineOptimizer:
             eps_abs=1e-5,
             eps_rel=1e-5,
         )
-        res = solver.solve()
+        v1 = int(str(getattr(osqp, "__version__", "0.6.0")).split(".")[0]) >= 1
+        res = solver.solve(raise_error=False) if v1 else solver.solve()
         if res.info.status_val in (1, 2) and res.x is not None:
             return np.clip(np.asarray(res.x, dtype=float), lb, ub), True
         return ref.copy(), False
