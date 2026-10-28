@@ -183,7 +183,7 @@ def cbf_qp_filter(
         lb=np.asarray(lb, dtype=float),
         ub=np.asarray(ub, dtype=float),
         eps=1e-5,
-        polish=True,
+        polish=False,
     )
     solve_us = (time.perf_counter() - t0) * 1e6
 
@@ -1210,6 +1210,7 @@ class ORCAController(MPC):
         P = sp.csc_matrix(2.0 * np.eye(2, dtype=float))
         q = -2.0 * v_pref
         A = sp.csc_matrix(np.vstack(A_rows))
+        t_orca = time.perf_counter()
         res = _osqp_solve(
             P=P,
             q=q,
@@ -1219,6 +1220,9 @@ class ORCAController(MPC):
             eps=1e-4,
             polish=False,
         )
+        solve_us = (time.perf_counter() - t_orca) * 1e6
+        self.last_solve_time_us = solve_us
+        self.solve_times_us.append(solve_us)
         if res.info.status_val in (1, 2) and res.x is not None:
             v_orca = np.clip(
                 np.asarray(res.x, dtype=float), -self.max_lin_speed, self.max_lin_speed

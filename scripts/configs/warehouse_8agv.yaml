@@ -1,0 +1,101 @@
+# 72m x 44m Multi-Aisle Warehouse 8-AGV Two-Stage (Start -> Pickup -> Delivery) Benchmark Configuration
+map:
+  width: 72
+  height: 44
+  resolution: 1.0
+  inflate_radius: 1
+  rack_x_blocks:
+    - [11, 19]
+    - [25, 33]
+    - [39, 47]
+    - [53, 61]
+  rack_y_blocks:
+    - [7, 13]
+    - [19, 25]
+    - [31, 37]
+  hazard_blocks:
+    - [[27, 30], [14, 15]]
+    - [[42, 45], [17, 18]]
+    - [[27, 30], [26, 27]]
+    - [[42, 45], [29, 30]]
+    - [[23, 24], [8, 11]]
+    - [[20, 21], [21, 24]]
+    - [[51, 52], [8, 11]]
+    - [[48, 49], [21, 24]]
+
+planner:
+  w: 1.08
+  turn_penalty: 0.45
+  min_separation: 1.0
+  max_high_level_nodes: 600
+  repeats: 10
+
+trajectory:
+  max_corridor_half_width: 0.42
+  sample_step: 0.0035
+  w_jerk: 2.5
+  w_acc: 1.2
+  w_ref: 1.8
+
+simulation:
+  dt: 0.1
+  steps: 305
+  robot_radius: 0.44
+  max_lin_speed: 2.6
+  max_ang_speed: 3.14
+  goal_dist_tol: 0.70
+  stage_reach_tol: 1.15
+  sensing_radius: 9.5
+  safe_margin: 0.45
+  cbf_gamma: 1.6
+  lookahead_l: 0.20
+
+agents:
+  "1":
+    start: [10, 14]
+    pickup: [35, 14]
+    delivery: [65, 26]
+    priority: 8
+    color: "#2563eb"
+  "2":
+    start: [62, 17]
+    pickup: [36, 17]
+    delivery: [6, 17]
+    priority: 7
+    color: "#ea580c"
+  "3":
+    start: [9, 26]
+    pickup: [35, 26]
+    delivery: [65, 14]
+    priority: 6
+    color: "#16a34a"
+  "4":
+    start: [61, 29]
+    pickup: [36, 29]
+    delivery: [6, 29]
+    priority: 5
+    color: "#9333ea"
+  "5":
+    start: [23, 3]
+    pickup: [23, 26]
+    delivery: [35, 40]
+    priority: 4
+    color: "#0891b2"
+  "6":
+    start: [20, 39]
+    pickup: [20, 14]
+    delivery: [6, 3]
+    priority: 3
+    color: "#dc2626"
+  "7":
+    start: [51, 3]
+    pickup: [51, 26]
+    delivery: [65, 40]
+    priority: 2
+    color: "#ca8a04"
+  "8":
+    start: [48, 39]
+    pickup: [48, 14]
+    delivery: [65, 3]
+    priority: 1
+    color: "#db2777"
