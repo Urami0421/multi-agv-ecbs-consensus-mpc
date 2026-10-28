@@ -1,12 +1,12 @@
 """
 MAPF Benchmark & Ablation Suite:
   1. 4-Group Ablation on the 8-AGV Two-Stage (Start -> Pickup -> Delivery) Warehouse
-     (`CBS`, `CBS+Turn`, `ECBS`, `ECBS+Turn`, plus `Independent A*`), measured over 10 runs
-     with `time.perf_counter()` (reporting median and P90 wall-clock time).
+     (`CBS`, `CBS+Turn`, `ECBS`, `ECBS+Turn`, plus `Independent A*` using the same low-level A*),
+     measured over 10 runs with `time.perf_counter()` (reporting median and P90 wall-clock time).
   2. Parameter sensitivity sweep over `w in {1.01, 1.05, 1.08, 1.20, 1.50}` and
      `turn_penalty in {0.00, 0.20, 0.45, 1.00}`.
-  3. Standardized MovingAI `.map`/`.scen` benchmark (`warehouse-10-20-10-2-1`,
-     `random-32-32-20`, `room-32-32-4`) across `{8, 16, 32}` agents.
+  3. Multi-scale synthetic grid benchmark (`synthetic_warehouse_48x32`,
+     `synthetic_random_32x32_20`, `synthetic_room_32x32_4`) across `{8, 16, 32}` agents.
   4. Saves raw CSV tables to `results/` and renders `assets/ecbs_vs_cbs_warehouse.png`.
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
 from python_motion_planning.common import Grid, TYPES
-from python_motion_planning.path_planner import AStar, CBS, ECBS
+from python_motion_planning.path_planner import ECBS
 from python_motion_planning.traj_optimizer import SafeCorridorBSplineOptimizer
 
 CONFIG_PATH = ROOT / "scripts" / "configs" / "warehouse_8agv.yaml"
@@ -127,8 +127,8 @@ def optimize_corridor_bspline_paths(
     return world_paths, opt_infos
 
 
-def load_movingai_map(map_path: Path) -> Grid:
-    """Parse a standard MovingAI `.map` file into a 2D `Grid`."""
+def load_grid_map_file(map_path: Path) -> Grid:
+    """Parse an ASCII `.map` grid file into a 2D `Grid`."""
     lines = [ln.rstrip("\r\n") for ln in map_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
     height = 0
     width = 0
@@ -150,10 +150,10 @@ def load_movingai_map(map_path: Path) -> Grid:
     return grid
 
 
-def load_movingai_scen(
+def load_scen_file(
     scen_path: Path, num_agents: int
 ) -> Tuple[Dict[str, Tuple[int, int]], Dict[str, Tuple[int, int]]]:
-    """Parse the first `num_agents` tasks from a standard MovingAI `.scen` file."""
+    """Parse the first `num_agents` start/goal tasks from a `.scen` task file."""
     lines = [ln.strip() for ln in scen_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
     starts: Dict[str, Tuple[int, int]] = {}
     goals: Dict[str, Tuple[int, int]] = {}
@@ -191,20 +191,27 @@ def run_planning_ablation(repeats: int = 10) -> Tuple[
     min_sep = float(cfg["planner"]["min_separation"])
     max_hl = int(cfg["planner"]["max_high_level_nodes"])
 
-    # 1. Independent A* (measured with time.perf_counter over `repeats` runs)
+    # 1. Independent A* using the identical low-level A* engine (w=1.0, turn_penalty=0.0, no constraints)
     ind_times_ms: List[float] = []
     ind_paths: Dict[str, List[Tuple[int, int]]] = {}
     ind_expanded = 0
     for _ in range(repeats):
         t0 = time.perf_counter()
+        ind_planner = ECBS(
+            grid,
+            starts,
+            goals,
+            waypoints=waypoints,
+            w=1.00,
+            turn_penalty=0.00,
+            min_separation=min_sep,
+        )
         cur_paths: Dict[str, List[Tuple[int, int]]] = {}
         cur_exp = 0
-        for aid in sorted(starts):
-            wp = waypoints[aid][0]
-            p1, info1 = AStar(map_=grid, start=starts[aid], goal=wp, diagonal=False).plan()
-            p2, info2 = AStar(map_=grid, start=wp, goal=goals[aid], diagonal=False).plan()
-            cur_paths[aid] = list(p1) + list(p2[1:])
-            cur_exp += len(info1.get("expand", {})) + len(info2.get("expand", {}))
+        for aid in ind_planner.agent_ids:
+            path, _, exp_cnt, _ = ind_planner._focal_low_level_astar(aid, set(), {})
+            cur_paths[aid] = path if path is not None else [starts[aid]]
+            cur_exp += exp_cnt
         ind_times_ms.append((time.perf_counter() - t0) * 1000.0)
         ind_paths = cur_paths
         ind_expanded = cur_exp
@@ -220,7 +227,7 @@ def run_planning_ablation(repeats: int = 10) -> Tuple[
             "method": "Independent A* (Unk. Inter-Agent)",
             "w": 1.00,
             "turn_penalty": 0.00,
-            "success": True,
+            "success": ind_conflicts == 0,
             "conflicts": ind_conflicts,
             "high_level_expanded": 1,
             "low_level_expanded": ind_expanded,
@@ -229,7 +236,7 @@ def run_planning_ablation(repeats: int = 10) -> Tuple[
             "makespan": ind_makespan,
             "soc": float(ind_steps),
             "lower_bound": float(ind_steps),
-            "suboptimality_ratio": 1.000,
+            "suboptimality_ratio": "N/A" if ind_conflicts > 0 else 1.000,
             "planning_time_ms": round(float(np.median(ind_times_ms)), 2),
             "time_p90_ms": round(float(np.percentile(ind_times_ms, 90)), 2),
         }
@@ -374,19 +381,24 @@ def run_parameter_sweep(repeats: int = 3) -> List[Dict[str, Any]]:
     return rows
 
 
-def run_movingai_benchmark() -> List[Dict[str, Any]]:
+def run_synthetic_grid_benchmark() -> List[Dict[str, Any]]:
     """
-    Evaluate `CBS (w=1.00, λ=0.00)` and `ECBS (w=1.08, λ=0.45)` on the standardized MovingAI
-    benchmarks (`warehouse-10-20-10-2-1`, `random-32-32-20`, `room-32-32-4`) for `{8, 16, 32}` agents.
+    Evaluate `CBS (w=1.00, λ=0.00)` and `ECBS (w=1.08, λ=0.45)` on multi-scale synthetic
+    grid topologies (`synthetic_warehouse_48x32`, `synthetic_random_32x32_20`,
+    `synthetic_room_32x32_4`) across `{8, 16, 32}` agents.
     """
     maps_dir = ROOT / "scripts" / "maps"
-    map_names = ["warehouse-10-20-10-2-1", "random-32-32-20", "room-32-32-4"]
+    map_names = [
+        "synthetic_warehouse_48x32",
+        "synthetic_random_32x32_20",
+        "synthetic_room_32x32_4",
+    ]
     rows: List[Dict[str, Any]] = []
 
     for mname in map_names:
-        grid = load_movingai_map(maps_dir / f"{mname}.map")
+        grid = load_grid_map_file(maps_dir / f"{mname}.map")
         for n_agents in (8, 16, 32):
-            starts, goals = load_movingai_scen(maps_dir / f"{mname}.scen", n_agents)
+            starts, goals = load_scen_file(maps_dir / f"{mname}.scen", n_agents)
             for method_name, w_val, tp_val, max_hl in (
                 ("CBS (w=1.00, λ=0.00)", 1.00, 0.00, 250),
                 ("ECBS (w=1.08, λ=0.45)", 1.08, 0.45, 250),
@@ -425,7 +437,7 @@ def run_movingai_benchmark() -> List[Dict[str, Any]]:
                     }
                 )
 
-    out_csv = ROOT / "results" / "movingai_benchmark.csv"
+    out_csv = ROOT / "results" / "synthetic_grid_benchmark.csv"
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     with open(out_csv, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
@@ -682,8 +694,8 @@ def main() -> int:
     sweep_rows = run_parameter_sweep(repeats=3)
     print(f"  Saved {len(sweep_rows)} parameter sweep rows to results/mapf_param_sweep.csv", flush=True)
 
-    print("\n=== [3/3] Running Standardized MovingAI Benchmark ({8, 16, 32} agents) ===", flush=True)
-    mai_rows = run_movingai_benchmark()
+    print("\n=== [3/3] Running Multi-Scale Synthetic Grid Benchmark ({8, 16, 32} agents) ===", flush=True)
+    mai_rows = run_synthetic_grid_benchmark()
     for r in mai_rows:
         print(
             f"  {r['map']:24s} | N={r['num_agents']:2d} | {r['planner']:20s} | "

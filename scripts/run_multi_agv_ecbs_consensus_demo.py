@@ -32,7 +32,7 @@ from benchmark_mapf import (
     optimize_corridor_bspline_paths,
     run_planning_ablation,
     run_parameter_sweep,
-    run_movingai_benchmark,
+    run_synthetic_grid_benchmark,
     plot_ecbs_vs_cbs_comparison,
 )
 from benchmark_control import (
@@ -63,33 +63,34 @@ def main(argv=None) -> int:
     _, waypoints, goals, priorities, _ = get_fleet_mission(cfg)
 
     print(
-        f"=== [1/4] Running 4-Group MAPF Ablation ({args.repeats} repeats), Parameter Sweep & MovingAI Benchmark ===",
+        f"=== [1/4] Running 4-Group MAPF Ablation ({args.repeats} repeats), Parameter Sweep & Synthetic Grid Benchmark ===",
         flush=True,
     )
     ecbs_paths, cbs_paths, planning_summary = run_planning_ablation(repeats=args.repeats)
     print(json.dumps(planning_summary, indent=2), flush=True)
     run_parameter_sweep(repeats=3)
-    run_movingai_benchmark()
+    run_synthetic_grid_benchmark()
 
     world_paths, _ = optimize_corridor_bspline_paths(grid, ecbs_paths, waypoints, cfg)
 
     print(
-        "\n=== [2/4] Running 6-Method Continuous Controller Ablation & Perturbation Robustness Suite ===",
+        "\n=== [2/4] Running 10-Variant Continuous Controller Ablation & 20-Seed Perturbation Suite ===",
         flush=True,
     )
     steps = int(cfg["simulation"]["steps"])
     control_results = run_control_ablation(world_paths, priorities, ecbs_paths=ecbs_paths, steps=steps)
     for ctrl_name, res in control_results.items():
         print(
-            f"  {ctrl_name:16s} | collisions={res['collision_events']:2d} | "
+            f"  {ctrl_name:20s} | collisions={res['collision_events']:2d} | "
             f"min_dist={res['min_inter_robot_dist']:5.2f}m | "
             f"2stage_succ={res['two_stage_success_rate']*100:5.1f}% | "
             f"makespan={res['makespan_s']:5.1f}s | "
             f"nav_err={res['mean_nav_error']:5.2f}m | "
-            f"osqp={res['osqp_mean_us']:6.1f}us",
+            f"osqp_c={res['osqp_mean_us']:5.1f}us | "
+            f"wall={res['wall_mean_us']:6.1f}us",
             flush=True,
         )
-    pert_rows = run_perturbation_experiment(world_paths, priorities, ecbs_paths, num_trials=5)
+    pert_rows = run_perturbation_experiment(world_paths, priorities, ecbs_paths, num_trials=20)
     print("  Perturbation robustness summary:", json.dumps(pert_rows, indent=2), flush=True)
 
     assets_dir = ROOT / "assets"
