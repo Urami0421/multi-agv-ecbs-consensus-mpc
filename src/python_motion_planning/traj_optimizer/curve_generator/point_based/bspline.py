@@ -461,17 +461,22 @@ class SafeCorridorBSplineOptimizer:
         )
         curve_2d, bs_info = bs_gen.generate([tuple(p.tolist()) for p in ctrl_pts])
 
-        # Dense curve-level collision verification; if any sample touches inflation/obstacle, tighten locally
-        repaired = False
-        for sx, sy in curve_2d:
-            if not self._is_world_point_free(grid, sx, sy):
-                # Find nearest control point and pull halfway toward original grid center
+        # Iterative dense curve-level post-verification: because per-control-point box bounds do not
+        # constrain the 4-point convex hull across corners, we verify all dense curve samples against
+        # TYPES.FREE and iteratively pull back local control points toward grid-center waypoints until
+        # zero samples touch OBSTACLE or INFLATION.
+        for _ in range(8):
+            violating_pts = [
+                (sx, sy) for sx, sy in curve_2d if not self._is_world_point_free(grid, sx, sy)
+            ]
+            if not violating_pts:
+                break
+            for sx, sy in violating_pts:
                 dists = np.linalg.norm(ctrl_pts - np.array([sx, sy]), axis=1)
                 idx_near = int(np.argmin(dists))
-                for k_adj in range(max(1, idx_near - 1), min(len(ctrl_pts) - 1, idx_near + 2)):
-                    ctrl_pts[k_adj] = pts_ref[k_adj]
-                repaired = True
-        if repaired:
+                for k_adj in range(max(1, idx_near - 2), min(len(ctrl_pts) - 1, idx_near + 3)):
+                    ctrl_pts[k_adj] = 0.5 * ctrl_pts[k_adj] + 0.5 * pts_ref[k_adj]
+                ctrl_pts[idx_near] = pts_ref[idx_near]
             curve_2d, bs_info = bs_gen.generate([tuple(p.tolist()) for p in ctrl_pts])
 
         traj_3d = Geometry.add_orient_to_2d_path(curve_2d)

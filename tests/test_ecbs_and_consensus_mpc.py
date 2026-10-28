@@ -206,6 +206,29 @@ def test_cbf_qp_filter_forward_invariance_and_infeasible_fallback() -> None:
         h_val = float(np.dot(p1 - p2, p1 - p2) - d_safe * d_safe)
         assert h_val >= -1e-2
 
+    # Verify exact unicycle linear actuation bounds inside CBF-QP (no post-clipping required)
+    theta_test = 0.45
+    l_test = 0.14
+    v_max_test = 2.0
+    w_max_test = 2.5
+    u_uni, info_uni = cbf_qp_filter(
+        p_i=np.array([0.0, 0.0]),
+        u_nom=np.array([-3.0, 3.0]),  # backward + large angular velocity demand
+        neighbors=[(np.array([2.5, 0.0]), np.array([-0.5, 0.0]))],
+        d_safe=1.6,
+        gamma=1.8,
+        u_max=v_max_test,
+        weights=[0.5],
+        theta=theta_test,
+        lookahead_l=l_test,
+        omega_max=w_max_test,
+    )
+    assert info_uni["status_val"] in (1.0, 2.0)
+    v_out = float(np.cos(theta_test) * u_uni[0] + np.sin(theta_test) * u_uni[1])
+    w_out = float((-np.sin(theta_test) * u_uni[0] + np.cos(theta_test) * u_uni[1]) / l_test)
+    assert -1e-4 <= v_out <= v_max_test + 1e-4
+    assert -w_max_test - 1e-4 <= w_out <= w_max_test + 1e-4
+
     # Infeasible sandwich: two overlapping neighbors demanding opposite infinite velocity
     u_fallback, info_infeas = cbf_qp_filter(
         p_i=np.array([0.0, 0.0]),
@@ -301,6 +324,17 @@ def test_consensus_mpc_and_orca_track_intersection_without_collision() -> None:
 
     path1 = [(float(x), 12.5) for x in np.linspace(4.5, 20.5, 25)]
     path2 = [(12.5, float(y)) for y in np.linspace(4.5, 20.5, 25)]
+    ecbs_paths = {
+        "1": [(x, 12) for x in range(4, 21)],
+        "2": [(12, 4), (12, 4)] + [(12, y) for y in range(4, 21)],
+    }
+    world_paths_3d = {
+        "1": [(x, y, 0.0) for (x, y) in path1],
+        "2": [(x, y, 1.57) for (x, y) in path2],
+    }
+    adg = ActionDependencyGraph(
+        grid, ecbs_paths, world_paths_3d, hold_buffer_m=2.2, leave_buffer_m=2.0
+    )
     priorities = {"1": 2, "2": 1}
 
     obs1, act1 = env.build_robot_spaces(r1)
@@ -318,6 +352,7 @@ def test_consensus_mpc_and_orca_track_intersection_without_collision() -> None:
         peer_robots=robots,
         priority=2,
         priorities=priorities,
+        adg=adg,
     )
     c2 = ConsensusMPC(
         obs2,
@@ -332,11 +367,12 @@ def test_consensus_mpc_and_orca_track_intersection_without_collision() -> None:
         peer_robots=robots,
         priority=1,
         priorities=priorities,
+        adg=adg,
     )
 
     env.reset()
     min_dist = float("inf")
-    for _ in range(110):
+    for _ in range(140):
         a1, _ = c1.get_action(r1.get_observation(env))
         a2, _ = c2.get_action(r2.get_observation(env))
         d = float(np.linalg.norm(r1.pos[:2] - r2.pos[:2]))
@@ -345,6 +381,49 @@ def test_consensus_mpc_and_orca_track_intersection_without_collision() -> None:
 
     assert min_dist >= 1.6
     assert np.linalg.norm(r1.pos[:2] - np.array([20.5, 12.5])) < 2.0
+    assert np.linalg.norm(r2.pos[:2] - np.array([12.5, 20.5])) < 2.5
+
+    # Also test Non-Holonomic ORCAController with ADG on the same intersection
+    r1.pose = np.array([4.5, 12.5, 0.0])
+    r1.vel = np.zeros(3)
+    r2.pose = np.array([12.5, 4.5, 1.57])
+    r2.vel = np.zeros(3)
+    adg.reset()
+    o1 = ORCAController(
+        obs1,
+        act1,
+        env.dt,
+        path1,
+        robot_model=r1,
+        obstacle_grid=grid,
+        max_lin_speed=2.2,
+        max_ang_speed=3.14,
+        self_id="1",
+        peer_robots=robots,
+        adg=adg,
+    )
+    o2 = ORCAController(
+        obs2,
+        act2,
+        env.dt,
+        path2,
+        robot_model=r2,
+        obstacle_grid=grid,
+        max_lin_speed=2.2,
+        max_ang_speed=3.14,
+        self_id="2",
+        peer_robots=robots,
+        adg=adg,
+    )
+    min_dist_orca = float("inf")
+    for _ in range(140):
+        a1, _ = o1.get_action(r1.get_observation(env))
+        a2, _ = o2.get_action(r2.get_observation(env))
+        min_dist_orca = min(min_dist_orca, float(np.linalg.norm(r1.pos[:2] - r2.pos[:2])))
+        env.step({"1": a1, "2": a2})
+
+    assert min_dist_orca >= 1.6
+    assert np.linalg.norm(r1.pos[:2] - np.array([20.5, 12.5])) < 2.5
     assert np.linalg.norm(r2.pos[:2] - np.array([12.5, 20.5])) < 2.5
 
 
