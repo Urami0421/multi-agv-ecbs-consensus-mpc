@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.2] - 2026-10-29
+
+### Added
+- **Lateral Safe-Corridor Linear Constraints in `MPC` (`controller/path_tracker/mpc.py`)**:
+  - Added `obstacle_surface_distance` and `MPC.corridor_half_widths` (1-Lipschitz certified obstacle-free lateral half-widths along the reference trajectory) and integrated soft-slacked linear corridor constraints (`-d_k - s_k <= n_k^T e_{p,k} <= d_k + s_k, s_k >= 0`) into a pre-allocated $3N$-variable, $5N$-constraint OSQP workspace (`use_corridor=True`).
+  - Added 11th controller variant `ConsensusMPC_Corridor` (`ADG + Corridor-Linear-MPC + Velocity-Level CBF-QP`) in `scripts/benchmark_control.py`, reducing nominal makespan to `26.6 s` and achieving `100.0%` (`20/20` trials) full completion under 60s randomized stall perturbations.
+  - Added unit test `test_linear_mpc_corridor_constraint_limits_lateral_excursion` (13 total tests in `tests/test_ecbs_and_consensus_mpc.py`).
+- **60.0s Full-Horizon Perturbation Evaluation, Finish-Time Quantiles & 95% Wilson CIs (`scripts/benchmark_control.py`, `results/perturbation_robustness.csv`)**:
+  - Extended randomized stall perturbation simulations to `60.0 s` (`600` steps) while reporting completion at both the `33.5 s` nominal cutoff and `60.0 s` full horizon, along with 95% Wilson score confidence intervals (`wilson_ci95`), per-agent finish-time distributions (`median / P90 / max`), and obstacle contact metrics (`obstacle_contact_events`, `min_obstacle_clearance`).
+- **Explicit `collision_free` Verification Flag in `SafeCorridorBSplineOptimizer` (`traj_optimizer/curve_generator/point_based/bspline.py`)**:
+  - Added `SafeCorridorBSplineOptimizer.find_violations` with arc-length segment densification (`<= 0.25 * resolution`) so sparse curve segments cannot jump across obstacle cells; `optimize()` now returns `collision_free`, `num_violations`, and `repair_iters` in `info` and requires `collision_free == True` for `info["success"]`.
+
+### Changed & Fixed
+- **Per-Controller OSQP Workspaces (`QP2DWorkspace` in `controller/path_tracker/mpc.py`)**:
+  - Replaced module-level global `_CBF_WS` and `_ORCA_WS` singletons with per-controller `QP2DWorkspace` instances (`self._cbf_ws`, `self._orca_ws`), eliminating import-time side effects and cross-agent warm-start state sharing.
+- **Unbiased Zero-Turn-Penalty Low-Level State Space (`path_planner/graph_search/ecbs.py`)**:
+  - Fixed `ECBS._focal_low_level_astar` so `nxt_dir` stays `-1` whenever `self.turn_penalty <= 0.0`, eliminating redundant heading-direction expansions in `CBS (λ=0)` (`2,188 -> 1,890` low-level expansions) and `ECBS (λ=0)` (`650 -> 619`). Regenerated `results/mapf_ablation.csv`, `results/mapf_param_sweep.csv`, and `results/synthetic_grid_benchmark.csv`.
+- **Precision of Safety Guarantees & Documentation (`README.md`, `README_zh.md`, `mpc.py`)**:
+  - Clarified `cbf_qp_filter` as a **velocity-level** distributed CBF-QP safety filter and documented unmodeled bounded-acceleration tracking (`±3.5 m/s²`), discrete-time integration (`dt = 0.1 s`), and longitudinal-dominated avoidance authority under small lookahead offset (`l = 0.04 m`, $l \cdot \omega_{\max} \approx 0.13\text{ m/s}$).
+
 ## [0.2.1] - 2026-10-28
 
 ### Added
@@ -11,10 +31,10 @@ All notable changes to this project are documented in this file.
   - Separated OSQP internal C solve time (`osqp_mean_us / osqp_p95_us`) from total step wall time (`wall_mean_us / wall_p95_us`) and renamed `deadlock_count` to `incomplete_count`.
 
 ### Changed & Fixed
-- **Strict Distributed `cbf_qp_filter` & Pure Rollout `MPC` (`controller/path_tracker/mpc.py`)**:
+- **Velocity-Level Distributed `cbf_qp_filter` & Pure Rollout `MPC` (`controller/path_tracker/mpc.py`)**:
   - Enforced exact linear unicycle actuation bounds ($0 \le [\cos\theta, \sin\theta] u \le v_{\max}$ and $-\omega_{\max} \le [-\sin\theta/l, \cos\theta/l] u \le \omega_{\max}$) directly inside the `cbf_qp_filter` and `ORCAController` QPs, removing all post-QP angular-velocity blending and heuristic lane skipping.
   - Added full $2l$ lookahead offset compensation to $d_{\text{safe,eff}} = r_i + r_j + 2l + d_{\text{margin}}$ and computed neighbor velocity $\hat{u}_j$ at the neighbor's lookahead point.
-  - Replaced per-step `osqp.OSQP().setup()` recreation in `MPC`, `cbf_qp_filter`, and `ORCAController` with persistent OSQP workspaces updated via `prob.update(...)`, reducing `MPC` internal C solve time to $\sim 27\,\mu\text{s}$.
+  - Replaced per-step `osqp.OSQP().setup()` recreation in `MPC`, `cbf_qp_filter`, and `ORCAController` with persistent OSQP workspaces updated via `prob.update(...)`.
   - Removed the 28-step time-difference cutoff in `ActionDependencyGraph` so precedence edges hold across arbitrary stall durations.
   - Replaced single-pass B-Spline corridor repair in `SafeCorridorBSplineOptimizer` with an 8-iteration dense curve verification and control-point pull-back loop.
 - **Synthetic Grid Benchmark Naming & Full Table (`scripts/maps/`, `scripts/benchmark_mapf.py`)**:

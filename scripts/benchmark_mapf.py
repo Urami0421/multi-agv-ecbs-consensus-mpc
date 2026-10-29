@@ -175,7 +175,7 @@ def load_scen_file(
     return starts, goals
 
 
-def run_planning_ablation(repeats: int = 10) -> Tuple[
+def run_planning_ablation(repeats: int = 10, write_csv: bool = True) -> Tuple[
     Dict[str, List[Tuple[int, int]]],
     Dict[str, List[Tuple[int, int]]],
     Dict[str, Dict[str, Any]],
@@ -295,6 +295,9 @@ def run_planning_ablation(repeats: int = 10) -> Tuple[
             cbs_paths = last_paths
         elif key == "Proposed_ECBS":
             ecbs_paths = last_paths
+
+    if not write_csv:
+        return ecbs_paths, cbs_paths, summary
 
     # Save 4-group ablation + Independent A* to results/mapf_ablation.csv
     results_dir = ROOT / "results"

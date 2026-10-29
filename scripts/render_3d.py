@@ -126,7 +126,7 @@ def main() -> int:
     cfg = load_warehouse_config()
     grid = build_warehouse_grid(inflate_radius=1, cfg=cfg)
     _, waypoints, goals, priorities, _ = get_fleet_mission(cfg)
-    ecbs_paths, _, _ = run_planning_ablation(repeats=1)
+    ecbs_paths, _, _ = run_planning_ablation(repeats=1, write_csv=False)
     world_paths, _ = optimize_corridor_bspline_paths(grid, ecbs_paths, waypoints, cfg)
     out_gif = ROOT / "assets" / "multi_agv_consensus_mpc_3d.gif"
     render_smooth_consensus_mpc_3d_gif(

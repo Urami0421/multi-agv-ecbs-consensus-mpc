@@ -284,7 +284,10 @@ class SafeCorridorBSplineOptimizer:
        minimizing weighted jerk (3rd-order finite differences), acceleration (2nd-order finite
        differences), and reference path deviation, subject to linear box constraints `l_i <= c_i <= u_i`
        and exact start/waypoint/goal equality constraints.
-    3. Evaluates the clamped cubic B-Spline curve and verifies dense curve samples against `TYPES.FREE`.
+    3. Evaluates the clamped cubic B-Spline curve, verifies it against `TYPES.FREE` at an arc-length
+       spacing of at most `verify_resolution`, and pulls offending control points back toward the
+       grid path for up to `max_repair_iters` rounds. The returned `info["collision_free"]` reports
+       whether the final curve passed verification; `info["success"]` is `False` otherwise.
     """
 
     def __init__(
@@ -294,12 +297,16 @@ class SafeCorridorBSplineOptimizer:
         w_ref: float = 1.8,
         max_corridor_half_width: float = 0.42,
         sample_step: float = 0.0035,
+        verify_resolution: float = 0.05,
+        max_repair_iters: int = 8,
     ) -> None:
         self.w_jerk = float(w_jerk)
         self.w_acc = float(w_acc)
         self.w_ref = float(w_ref)
         self.max_corridor_half_width = float(max_corridor_half_width)
         self.sample_step = float(sample_step)
+        self.verify_resolution = float(verify_resolution)
+        self.max_repair_iters = int(max_repair_iters)
 
     @staticmethod
     def _is_world_point_free(grid: Grid, wx: float, wy: float) -> bool:
@@ -308,6 +315,28 @@ class SafeCorridorBSplineOptimizer:
             return False
         cell = int(grid.type_map[(gx, gy)])
         return cell != TYPES.OBSTACLE and cell != TYPES.INFLATION
+
+    def find_violations(
+        self, grid: Grid, curve_2d: Sequence[Tuple[float, float]]
+    ) -> List[Tuple[float, float]]:
+        """
+        Return the points of the sampled curve, linearly densified so that consecutive checks are at
+        most `verify_resolution` apart, that fall outside `TYPES.FREE` (OBSTACLE, INFLATION or out of
+        bounds).
+        """
+        pts = np.asarray(curve_2d, dtype=float)
+        if len(pts) == 0:
+            return []
+        checks = [pts[0]]
+        for a, b in zip(pts[:-1], pts[1:]):
+            n_sub = max(1, int(math.ceil(float(np.linalg.norm(b - a)) / self.verify_resolution)))
+            for j in range(1, n_sub + 1):
+                checks.append(a + (b - a) * (j / n_sub))
+        return [
+            (float(p[0]), float(p[1]))
+            for p in checks
+            if not self._is_world_point_free(grid, float(p[0]), float(p[1]))
+        ]
 
     def _is_box_free(
         self, grid: Grid, lx: float, ux: float, ly: float, uy: float
@@ -465,27 +494,34 @@ class SafeCorridorBSplineOptimizer:
         # constrain the 4-point convex hull across corners, we verify all dense curve samples against
         # TYPES.FREE and iteratively pull back local control points toward grid-center waypoints until
         # zero samples touch OBSTACLE or INFLATION.
-        for _ in range(8):
-            violating_pts = [
-                (sx, sy) for sx, sy in curve_2d if not self._is_world_point_free(grid, sx, sy)
-            ]
-            if not violating_pts:
-                break
-            for sx, sy in violating_pts:
-                dists = np.linalg.norm(ctrl_pts - np.array([sx, sy]), axis=1)
-                idx_near = int(np.argmin(dists))
+        violating_pts = self.find_violations(grid, curve_2d)
+        repair_iters = 0
+        while violating_pts and repair_iters < self.max_repair_iters:
+            near_indices = sorted(
+                {
+                    int(np.argmin(np.linalg.norm(ctrl_pts - np.array([sx, sy]), axis=1)))
+                    for sx, sy in violating_pts
+                }
+            )
+            for idx_near in near_indices:
                 for k_adj in range(max(1, idx_near - 2), min(len(ctrl_pts) - 1, idx_near + 3)):
                     ctrl_pts[k_adj] = 0.5 * ctrl_pts[k_adj] + 0.5 * pts_ref[k_adj]
                 ctrl_pts[idx_near] = pts_ref[idx_near]
             curve_2d, bs_info = bs_gen.generate([tuple(p.tolist()) for p in ctrl_pts])
+            violating_pts = self.find_violations(grid, curve_2d)
+            repair_iters += 1
 
+        collision_free = not violating_pts
         traj_3d = Geometry.add_orient_to_2d_path(curve_2d)
         corridor_boxes = [
             (float(lx[i]), float(ux[i]), float(ly[i]), float(uy[i]))
             for i in range(len(pts_ref))
         ]
         return traj_3d, {
-            "success": bool(ok_x and ok_y and bs_info["success"]),
+            "success": bool(ok_x and ok_y and bs_info["success"] and collision_free),
+            "collision_free": collision_free,
+            "num_violations": len(violating_pts),
+            "repair_iters": repair_iters,
             "control_points": ctrl_pts,
             "corridor_boxes": corridor_boxes,
             "length": bs_info["length"],

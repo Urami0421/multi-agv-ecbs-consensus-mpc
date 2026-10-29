@@ -1,6 +1,6 @@
 key,method,w,turn_penalty,success,conflicts,high_level_expanded,low_level_expanded,total_steps,total_turns,makespan,soc,lower_bound,suboptimality_ratio,planning_time_ms,time_p90_ms
-Independent_AStar,Independent A* (Unk. Inter-Agent),1.0,0.0,False,2,1,601,465,44,70,465.0,465.0,N/A,6.1,6.31
-Standard_CBS,"CBS (w=1.00, λ=0.00)",1.0,0.0,True,0,8,2188,466,46,70,466.0,466.0,1.0,25.93,26.12
-CBS_Turn,"CBS + Turn (w=1.00, λ=0.45)",1.0,0.45,True,0,15,6245,466,28,70,478.6,478.6,1.0,68.1,69.28
-ECBS_NoTurn,"ECBS (w=1.08, λ=0.00)",1.08,0.0,True,0,1,650,466,46,70,466.0,465.0,1.0022,8.8,9.03
-Proposed_ECBS,"ECBS + Turn (w=1.08, λ=0.45)",1.08,0.45,True,0,1,1302,467,27,70,479.15,473.45,1.012,15.71,16.06
+Independent_AStar,Independent A* (Unk. Inter-Agent),1.0,0.0,False,2,1,597,465,44,70,465.0,465.0,N/A,5.91,6.06
+Standard_CBS,"CBS (w=1.00, λ=0.00)",1.0,0.0,True,0,8,1890,466,46,70,466.0,466.0,1.0,24.21,25.28
+CBS_Turn,"CBS + Turn (w=1.00, λ=0.45)",1.0,0.45,True,0,15,6245,466,28,70,478.6,478.6,1.0,72.88,75.81
+ECBS_NoTurn,"ECBS (w=1.08, λ=0.00)",1.08,0.0,True,0,1,619,466,46,70,466.0,465.0,1.0022,8.71,9.24
+Proposed_ECBS,"ECBS + Turn (w=1.08, λ=0.45)",1.08,0.45,True,0,1,1302,467,27,70,479.15,473.45,1.012,17.44,18.91

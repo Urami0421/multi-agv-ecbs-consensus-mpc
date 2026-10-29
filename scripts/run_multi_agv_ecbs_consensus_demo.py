@@ -3,9 +3,10 @@ Full-Stack Multi-AGV Planning, Safe-Corridor B-Spline Optimization, and Control 
 
 Delegates to the modular scripts in `scripts/`:
   - `scripts/benchmark_mapf.py`: 4-Group MAPF Ablation (10 repeats), (w, turn_penalty) sweep,
-    and MovingAI `.map`/`.scen` evaluation (`results/mapf_*.csv`, `results/movingai_benchmark.csv`).
-  - `scripts/benchmark_control.py`: 6-Method continuous controller ablation and 5-seed random
-    delay/perturbation robustness evaluation (`results/control_ablation.csv`,
+    and synthetic `.map`/`.scen` grid benchmark (`results/mapf_*.csv`,
+    `results/synthetic_grid_benchmark.csv`).
+  - `scripts/benchmark_control.py`: 11-variant continuous controller ablation and randomized
+    stall/perturbation robustness evaluation (`results/control_ablation.csv`,
     `results/perturbation_robustness.csv`).
   - `scripts/render_2d.py`: 2D Matplotlib simulation renderer (`assets/multi_agv_consensus_mpc_2d.gif`).
   - `scripts/render_3d.py`: 3D PyVista/VTK off-screen warehouse renderer (`assets/multi_agv_consensus_mpc_3d.gif`).
@@ -74,15 +75,17 @@ def main(argv=None) -> int:
     world_paths, _ = optimize_corridor_bspline_paths(grid, ecbs_paths, waypoints, cfg)
 
     print(
-        "\n=== [2/4] Running 10-Variant Continuous Controller Ablation & 20-Seed Perturbation Suite ===",
+        "\n=== [2/4] Running 11-Variant Continuous Controller Ablation & Randomized Perturbation Suite ===",
         flush=True,
     )
     steps = int(cfg["simulation"]["steps"])
     control_results = run_control_ablation(world_paths, priorities, ecbs_paths=ecbs_paths, steps=steps)
     for ctrl_name, res in control_results.items():
         print(
-            f"  {ctrl_name:20s} | collisions={res['collision_events']:2d} | "
+            f"  {ctrl_name:22s} | collisions={res['collision_events']:2d} | "
             f"min_dist={res['min_inter_robot_dist']:5.2f}m | "
+            f"obs_contacts={res['obstacle_contact_events']:2d} | "
+            f"min_obs={res['min_obstacle_clearance']:6.3f}m | "
             f"2stage_succ={res['two_stage_success_rate']*100:5.1f}% | "
             f"makespan={res['makespan_s']:5.1f}s | "
             f"nav_err={res['mean_nav_error']:5.2f}m | "
@@ -90,7 +93,7 @@ def main(argv=None) -> int:
             f"wall={res['wall_mean_us']:6.1f}us",
             flush=True,
         )
-    pert_rows = run_perturbation_experiment(world_paths, priorities, ecbs_paths, num_trials=20)
+    pert_rows = run_perturbation_experiment(world_paths, priorities, ecbs_paths)
     print("  Perturbation robustness summary:", json.dumps(pert_rows, indent=2), flush=True)
 
     assets_dir = ROOT / "assets"

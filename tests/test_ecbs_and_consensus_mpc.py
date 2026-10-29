@@ -291,6 +291,61 @@ def test_linear_mpc_osqp_closed_loop_convergence() -> None:
     assert float(np.linalg.norm(robot.lin_vel[:2])) < 0.25
 
 
+def test_linear_mpc_corridor_constraint_limits_lateral_excursion() -> None:
+    """Case 13: The optional corridor rows shrink the predicted lateral excursion toward a wall."""
+    grid = Grid(bounds=[[0, 30], [0, 9]], resolution=1.0)
+    grid.fill_boundary_with_obstacles()
+    grid.type_map[:, 0:3] = TYPES.OBSTACLE
+    grid.type_map[:, 6:9] = TYPES.OBSTACLE
+    _ = grid.esdf
+    path = [(float(x), 4.5) for x in np.linspace(2.5, 27.5, 60)]
+    heading = 1.3
+
+    def plan_once(use_corridor: bool) -> MPC:
+        env = ToySimulator(dim=2, dt=0.1, obstacle_grid=grid, robot_collisions=False)
+        robot = DiffDriveRobot(
+            dim=2,
+            radius=0.45,
+            pose=np.array([3.5, 5.25, heading]),
+            vel=np.array([2.6 * math.cos(heading), 2.6 * math.sin(heading), 0.0]),
+            max_lin_speed=2.6,
+            max_ang_speed=3.14,
+            action_min=np.array([-3.5, 0.0, -6.28]),
+            action_max=np.array([3.5, 0.0, 6.28]),
+        )
+        env.add_robot("1", robot)
+        obs_space, act_space = env.build_robot_spaces(robot)
+        mpc = MPC(
+            obs_space,
+            act_space,
+            env.dt,
+            path,
+            robot_model=robot,
+            obstacle_grid=grid,
+            max_lin_speed=2.6,
+            max_ang_speed=3.14,
+            use_corridor=use_corridor,
+        )
+        mpc.get_action(robot.get_observation(env))
+        return mpc
+
+    mpc_on = plan_once(True)
+    mpc_off = plan_once(False)
+
+    # Free half-width around y = 4.5 is 1.5 m to the walls minus 0.45 m radius minus 0.05 m margin
+    half = mpc_on.last_corridor_half_widths
+    assert np.all(np.isfinite(half))
+    assert np.all(half <= 1.0 + 1e-9) and np.all(half > 0.7)
+    assert np.all(np.isinf(mpc_off.last_corridor_half_widths))
+
+    excess_on = float(np.max(mpc_on.pred_traj[1:, 1] - 4.5 - half))
+    excess_off = float(np.max(mpc_off.pred_traj[1:, 1] - 4.5 - half))
+    assert excess_off > 0.0
+    assert excess_on < excess_off - 0.02
+    assert mpc_on.last_corridor_slack > 1e-3
+    assert mpc_off.last_corridor_slack < 1e-6
+
+
 def test_consensus_mpc_and_orca_track_intersection_without_collision() -> None:
     """Case 10: ConsensusMPC (ADG + Linear-MPC + CBF-QP) and ORCA avoid inter-robot collisions."""
     grid = Grid(bounds=[[0, 25], [0, 25]], resolution=1.0)
@@ -450,10 +505,21 @@ def test_bspline_and_safe_corridor_optimizer_respect_free_space() -> None:
     traj_3d, opt_info = opt.optimize(grid, grid_path, mandatory_waypoints=[(4, 3), (4, 15), (15, 15)])
 
     assert opt_info["success"] is True
+    assert opt_info["collision_free"] is True
+    assert opt_info["num_violations"] == 0
     for x, y, _ in traj_3d:
         gx, gy = grid.world_to_map((x, y))
         assert grid.within_bounds((gx, gy))
         assert int(grid.type_map[gx, gy]) == TYPES.FREE
+    assert opt.find_violations(grid, [(x, y) for x, y, _ in traj_3d]) == []
+
+    # Two samples straddling an obstacle cell: the sample points themselves are free, so only the
+    # arc-length densified check can detect that the curve passes through the obstacle.
+    wall = Grid(bounds=[[0, 10], [0, 10]], resolution=1.0)
+    wall.type_map[5, 3] = TYPES.OBSTACLE
+    sparse_curve = [(4.5, 3.5), (6.5, 3.5)]
+    assert all(opt._is_world_point_free(wall, x, y) for x, y in sparse_curve)
+    assert len(opt.find_violations(wall, sparse_curve)) > 0
 
 
 def test_action_dependency_graph_delays_successor_until_predecessor_clears() -> None:

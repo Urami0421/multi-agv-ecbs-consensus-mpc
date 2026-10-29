@@ -70,6 +70,8 @@ class ECBS:
     condition `cost <= w * lower_bound <= w * optimal_cost`.
 
     When `w = 1.0` and `turn_penalty = 0.0`, ECBS reduces to exact optimal CBS.
+    The heading component of the low-level state is only tracked when `turn_penalty > 0.0`;
+    otherwise it is fixed to `-1` so that states differing only in heading are not duplicated.
 
     Args:
         map_: 2D `Grid` map from `python_motion_planning.common.env.map`.
@@ -385,6 +387,7 @@ class ECBS:
             + remaining_leg[initial_stage]
         )
         start_state: LowLevelState = (start_pt, 0, initial_stage, -1)
+        track_heading = self.turn_penalty > 0.0
 
         seq = itertools.count()
         # Standard A* tie-breaking: prefer larger g (deeper progress toward goal) on equal f
@@ -496,7 +499,10 @@ class ECBS:
                     nxt_stage += 1
 
                 is_move = d_i < 4
-                nxt_dir = d_i if is_move else dir_idx
+                if track_heading:
+                    nxt_dir = d_i if is_move else dir_idx
+                else:
+                    nxt_dir = -1
                 turn_cost = 0.0
                 if is_move and dir_idx != -1 and d_i != dir_idx:
                     turn_cost = self.turn_penalty

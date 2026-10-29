@@ -44,7 +44,9 @@ from python_motion_planning.controller import (
     ORCAController,
     ActionDependencyGraph,
     ConsensusMPC,
+    QP2DWorkspace,
     cbf_qp_filter,
+    obstacle_surface_distance,
     unicycle_to_lookahead_point,
     unicycle_vel_to_single_integrator,
     single_integrator_to_unicycle_vel,
@@ -124,6 +126,7 @@ class ADGPurePursuitCBF(ADGPurePursuit):
         self.lookahead_l = float(lookahead_l)
         self.solve_times_us: List[float] = []
         self.wall_times_us: List[float] = []
+        self._cbf_ws = QP2DWorkspace(max_rows=12, eps=1e-5)
 
     def _get_desired_vel(self, target_pose: np.ndarray, cur_pose: np.ndarray) -> np.ndarray:
         nom_vel = super()._get_desired_vel(target_pose, cur_pose)
@@ -175,6 +178,7 @@ class ADGPurePursuitCBF(ADGPurePursuit):
             theta=theta_i,
             lookahead_l=self.lookahead_l,
             omega_max=self.max_ang_speed,
+            workspace=self._cbf_ws,
         )
         self.solve_times_us.append(info["solve_time_us"])
         self.wall_times_us.append(info["wall_time_us"])
@@ -187,6 +191,15 @@ class ADGPurePursuitCBF(ADGPurePursuit):
             allow_reverse=False,
         )
         return np.array([v_safe, 0.0, w_safe], dtype=float)
+
+
+def obstacle_clearance(grid: Grid, pos: np.ndarray, radius: float) -> float:
+    """
+    Clearance between a disk robot (center `pos`, `radius`) and the nearest OBSTACLE cell boundary.
+    Values `<= 0` mean the disk touches an obstacle. INFLATION cells are free space here, since they
+    are a planning margin and not a physical object. Exact below `radius + 1 m`.
+    """
+    return obstacle_surface_distance(grid, pos[:2], max_dist=radius + 1.0) - radius
 
 
 _CACHED_WAREHOUSE: Optional[Tuple[Dict[str, Any], Grid, Any, Any, Any]] = None
@@ -211,7 +224,7 @@ def simulate_controller(
     waypoints: Optional[Dict[str, List[Tuple[int, int]]]] = None,
     goals: Optional[Dict[str, Tuple[int, int]]] = None,
     steps: int = 305,
-    robot_radius: float = 0.44,
+    robot_radius: Optional[float] = None,
     seed: int = 0,
     noise: float = 0.001,
     stall_windows: Optional[Dict[str, Tuple[int, int]]] = None,
@@ -219,14 +232,28 @@ def simulate_controller(
     """
     Run an 8-AGV continuous differential-drive simulation in `ToySimulator` and measure:
       - True current-position and pre-bounce pairwise collision events (`d < 2 * robot_radius`)
+      - Robot-to-obstacle clearance and obstacle contact events (the simulator resolves contacts
+        by bouncing robots off obstacle cells, so they must be counted explicitly)
       - Strict sequential two-stage completion (`Start -> Pickup -> Delivery`)
       - Makespan (s), mean speed (m/s), stop time (s), incomplete agents, and OSQP solve time (us).
+    Controller and task parameters are read from the `simulation` section of the warehouse YAML.
     """
     random.seed(seed)
     np.random.seed(seed)
     cfg, grid, cfg_waypoints, cfg_goals, agv_colors = _get_cached_warehouse()
     waypoints = waypoints if waypoints is not None else cfg_waypoints
     goals = goals if goals is not None else cfg_goals
+    sim = cfg["simulation"]
+    robot_radius = float(sim["robot_radius"]) if robot_radius is None else float(robot_radius)
+    v_max = float(sim["max_lin_speed"])
+    w_max = float(sim["max_ang_speed"])
+    goal_tol = float(sim["goal_dist_tol"])
+    pickup_tol = float(sim["pickup_reach_tol"])
+    delivery_tol = float(sim["delivery_reach_tol"])
+    sensing_radius = float(sim["sensing_radius"])
+    safe_margin = float(sim["safe_margin"])
+    cbf_gamma = float(sim["cbf_gamma"])
+    lookahead_l = float(sim["lookahead_l"])
 
     env = ToySimulator(
         dim=2,
@@ -248,7 +275,7 @@ def simulate_controller(
             pose=start_pose,
             vel=np.zeros(3),
             max_lin_speed=2.8,
-            max_ang_speed=3.14,
+            max_ang_speed=w_max,
             action_min=np.array([-3.5, 0.0, -6.28]),
             action_max=np.array([3.5, 0.0, 6.28]),
             color=agv_colors[rid],
@@ -263,6 +290,7 @@ def simulate_controller(
         "ADG_PurePursuit_CBF",
         "ADG_LinearMPC",
         "ConsensusMPC",
+        "ConsensusMPC_Corridor",
     ):
         adg = ActionDependencyGraph(grid, ecbs_paths, world_paths)
 
@@ -278,10 +306,10 @@ def simulate_controller(
                 path_w,
                 robot_model=robot,
                 obstacle_grid=grid,
-                max_lin_speed=2.6,
-                max_ang_speed=3.14,
+                max_lin_speed=v_max,
+                max_ang_speed=w_max,
                 lookahead_distance=2.4,
-                goal_dist_tol=0.70,
+                goal_dist_tol=goal_tol,
             )
         elif controller_name == "RPP":
             controllers[rid] = RPP(
@@ -291,11 +319,11 @@ def simulate_controller(
                 path_w,
                 robot_model=robot,
                 obstacle_grid=grid,
-                max_lin_speed=2.6,
-                max_ang_speed=3.14,
+                max_lin_speed=v_max,
+                max_ang_speed=w_max,
                 lookahead_distance=2.4,
                 d_prox=1.2,
-                goal_dist_tol=0.70,
+                goal_dist_tol=goal_tol,
             )
         elif controller_name == "DWA":
             controllers[rid] = DWA(
@@ -305,11 +333,11 @@ def simulate_controller(
                 path_w,
                 robot_model=robot,
                 obstacle_grid=grid,
-                max_lin_speed=2.6,
-                max_ang_speed=3.14,
+                max_lin_speed=v_max,
+                max_ang_speed=w_max,
                 lookahead_distance=2.6,
                 vel_reso=np.array([0.4, 0.4, np.deg2rad(25)]),
-                goal_dist_tol=0.70,
+                goal_dist_tol=goal_tol,
             )
         elif controller_name in ("ORCA", "ADG_ORCA"):
             controllers[rid] = ORCAController(
@@ -319,16 +347,16 @@ def simulate_controller(
                 path_w,
                 robot_model=robot,
                 obstacle_grid=grid,
-                max_lin_speed=2.6,
-                max_ang_speed=3.14,
+                max_lin_speed=v_max,
+                max_ang_speed=w_max,
                 lookahead_distance=2.4,
-                goal_dist_tol=0.70,
+                goal_dist_tol=goal_tol,
                 self_id=rid,
                 peer_robots=robots,
                 adg=adg if controller_name == "ADG_ORCA" else None,
                 time_horizon=2.0,
-                safe_margin=0.02,
-                lookahead_l=0.04,
+                safe_margin=safe_margin,
+                lookahead_l=lookahead_l,
             )
         elif controller_name == "ADG_PurePursuit":
             controllers[rid] = ADGPurePursuit(
@@ -338,10 +366,10 @@ def simulate_controller(
                 path_w,
                 robot_model=robot,
                 obstacle_grid=grid,
-                max_lin_speed=2.6,
-                max_ang_speed=3.14,
+                max_lin_speed=v_max,
+                max_ang_speed=w_max,
                 lookahead_distance=2.4,
-                goal_dist_tol=0.70,
+                goal_dist_tol=goal_tol,
                 self_id=rid,
                 adg=adg,
             )
@@ -353,21 +381,23 @@ def simulate_controller(
                 path_w,
                 robot_model=robot,
                 obstacle_grid=grid,
-                max_lin_speed=2.6,
-                max_ang_speed=3.14,
+                max_lin_speed=v_max,
+                max_ang_speed=w_max,
                 lookahead_distance=2.4,
-                goal_dist_tol=0.70,
+                goal_dist_tol=goal_tol,
                 self_id=rid,
                 adg=adg,
                 peer_robots=robots,
                 priority=priorities[rid],
                 priorities=priorities,
-                sensing_radius=3.0,
-                safe_margin=0.02,
-                cbf_gamma=2.2,
-                lookahead_l=0.04,
+                sensing_radius=sensing_radius,
+                safe_margin=safe_margin,
+                cbf_gamma=cbf_gamma,
+                lookahead_l=lookahead_l,
             )
-        elif controller_name in ("ADG_LinearMPC", "LinearMPC_CBF", "ConsensusMPC"):
+        elif controller_name in (
+            "ADG_LinearMPC", "LinearMPC_CBF", "ConsensusMPC", "ConsensusMPC_Corridor"
+        ):
             controllers[rid] = ConsensusMPC(
                 obs_space,
                 act_space,
@@ -375,20 +405,21 @@ def simulate_controller(
                 path_w,
                 robot_model=robot,
                 obstacle_grid=grid,
-                max_lin_speed=2.6,
-                max_ang_speed=3.14,
+                max_lin_speed=v_max,
+                max_ang_speed=w_max,
                 lookahead_distance=2.4,
-                goal_dist_tol=0.70,
+                goal_dist_tol=goal_tol,
                 self_id=rid,
                 peer_robots=robots,
                 priority=priorities[rid],
                 priorities=priorities,
-                adg=adg if controller_name in ("ADG_LinearMPC", "ConsensusMPC") else None,
-                use_cbf=(controller_name in ("LinearMPC_CBF", "ConsensusMPC")),
-                sensing_radius=3.0,
-                safe_margin=0.02,
-                cbf_gamma=2.2,
-                lookahead_l=0.04,
+                adg=adg if controller_name != "LinearMPC_CBF" else None,
+                use_cbf=(controller_name != "ADG_LinearMPC"),
+                use_corridor=(controller_name == "ConsensusMPC_Corridor"),
+                sensing_radius=sensing_radius,
+                safe_margin=safe_margin,
+                cbf_gamma=cbf_gamma,
+                lookahead_l=lookahead_l,
             )
         else:
             raise ValueError(f"Unknown controller: {controller_name}")
@@ -399,6 +430,9 @@ def simulate_controller(
     pose_history: Dict[str, List[np.ndarray]] = {rid: [] for rid in robots}
     collision_events = 0
     in_collision_pairs = set()
+    obstacle_contact_events = 0
+    in_obstacle_contact = set()
+    min_obstacle_clearance = float("inf")
 
     rids = sorted(robots.keys())
     contact_limit = 2.0 * robot_radius + 0.02  # 0.90m physical contact envelope
@@ -418,15 +452,24 @@ def simulate_controller(
             speed_history[rid].append(spd)
 
             # Sequential Stage 1 -> Stage 2 verification
-            if not picked_up[rid] and float(np.linalg.norm(pos_cur - pickup_xy[rid])) <= 1.65:
+            if not picked_up[rid] and float(np.linalg.norm(pos_cur - pickup_xy[rid])) <= pickup_tol:
                 picked_up[rid] = True
             if picked_up[rid] and not completed[rid]:
-                if float(np.linalg.norm(pos_cur - delivery_xy[rid])) <= 0.95:
+                if float(np.linalg.norm(pos_cur - delivery_xy[rid])) <= delivery_tol:
                     completed[rid] = True
                     finish_step[rid] = step_idx
 
             if not completed[rid] and spd < 0.08:
                 stop_steps[rid] += 1
+
+            clearance = obstacle_clearance(grid, pos_cur, robot_radius)
+            min_obstacle_clearance = min(min_obstacle_clearance, clearance)
+            if clearance < 0.0:
+                if rid not in in_obstacle_contact:
+                    obstacle_contact_events += 1
+                    in_obstacle_contact.add(rid)
+            else:
+                in_obstacle_contact.discard(rid)
 
             ob = robot.get_observation(env)
             act, _ = controllers[rid].get_action(ob)
@@ -474,7 +517,7 @@ def simulate_controller(
         length = float(np.sum(np.linalg.norm(diffs, axis=1)))
         goal_xy = delivery_xy[rid]
         nav_err = float(np.linalg.norm(poses[-1, :2] - goal_xy))
-        if picked_up[rid] and nav_err <= 0.90:
+        if picked_up[rid] and nav_err <= delivery_tol:
             completed[rid] = True
         if not completed[rid]:
             incomplete_count += 1
@@ -499,6 +542,8 @@ def simulate_controller(
         "controller": controller_name,
         "collision_events": collision_events,
         "min_inter_robot_dist": round(float(min(min_pair_dist_history)), 3),
+        "obstacle_contact_events": obstacle_contact_events,
+        "min_obstacle_clearance": round(float(min_obstacle_clearance), 3),
         "pickup_rate": round(float(np.mean(list(picked_up.values()))), 3),
         "two_stage_success_rate": round(float(np.mean(list(completed.values()))), 3),
         "success_rate": round(float(np.mean(list(completed.values()))), 3),
@@ -515,7 +560,12 @@ def simulate_controller(
         "min_dist_series": min_pair_dist_history,
         "speed_series": speed_history,
         "pose_series": pose_history,
+        "finish_steps": dict(finish_step),
+        "completed": dict(completed),
     }
+
+
+_NON_CSV_KEYS = ("min_dist_series", "speed_series", "pose_series", "finish_steps", "completed")
 
 
 def run_control_ablation(
@@ -524,7 +574,7 @@ def run_control_ablation(
     ecbs_paths: Optional[Dict[str, List[Tuple[int, int]]]] = None,
     steps: int = 305,
 ) -> Dict[str, Dict[str, Any]]:
-    """Run all 10 controller variants on the 8-AGV warehouse and save `results/control_ablation.csv`."""
+    """Run all 11 controller variants on the 8-AGV warehouse and save `results/control_ablation.csv`."""
     method_order = (
         "PurePursuit",
         "RPP",
@@ -536,6 +586,7 @@ def run_control_ablation(
         "ADG_LinearMPC",
         "LinearMPC_CBF",
         "ConsensusMPC",
+        "ConsensusMPC_Corridor",
     )
     results: Dict[str, Dict[str, Any]] = {}
     csv_rows: List[Dict[str, Any]] = []
@@ -549,13 +600,7 @@ def run_control_ablation(
             steps=steps,
         )
         results[ctrl_name] = res
-        csv_rows.append(
-            {
-                k: v
-                for k, v in res.items()
-                if k not in ("min_dist_series", "speed_series", "pose_series")
-            }
-        )
+        csv_rows.append({k: v for k, v in res.items() if k not in _NON_CSV_KEYS})
 
     out_csv = ROOT / "results" / "control_ablation.csv"
     out_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -566,11 +611,24 @@ def run_control_ablation(
     return results
 
 
+def wilson_interval(successes: int, n: int, z: float = 1.96) -> Tuple[float, float]:
+    """Wilson score interval for a binomial proportion (95% by default)."""
+    if n <= 0:
+        return float("nan"), float("nan")
+    p = successes / n
+    denom = 1.0 + z * z / n
+    center = (p + z * z / (2.0 * n)) / denom
+    half = z * math.sqrt(p * (1.0 - p) / n + z * z / (4.0 * n * n)) / denom
+    return max(0.0, center - half), min(1.0, center + half)
+
+
 def run_perturbation_experiment(
     world_paths: Dict[str, List[Tuple[float, float, float]]],
     priorities: Dict[str, int],
     ecbs_paths: Dict[str, List[Tuple[int, int]]],
-    num_trials: int = 20,
+    num_trials: Optional[int] = None,
+    steps: Optional[int] = None,
+    report_steps: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """
     Evaluate controller robustness across `num_trials` genuinely randomized seeds:
@@ -578,7 +636,17 @@ def run_perturbation_experiment(
         (`rng.sample(rids, k=2)`), stalled at a random step `t_start ~ Uniform{35, ..., 110}` for a
         random duration `duration ~ Uniform{20, ..., 35}` (`2.0-3.5s`), plus Gaussian velocity noise
         (`noise=0.015`).
+      - Each trial runs for `steps` (default 60 s) so that delayed agents can finish; completion is
+        reported both within `report_steps` (default 33.5 s) and within the full horizon.
+      - Completion rates are agent-level (`num_trials * 8` agent-trials) with 95% Wilson intervals.
+        Agents in the same trial are correlated, so these intervals are optimistic.
+      - Collision-free rate is trial-level (`num_trials` trials) with a 95% Wilson interval.
     """
+    sim = _get_cached_warehouse()[0]["simulation"]
+    num_trials = int(sim["perturbation_trials"]) if num_trials is None else int(num_trials)
+    steps = int(sim["perturbation_steps"]) if steps is None else int(steps)
+    report_steps = int(sim["perturbation_report_steps"]) if report_steps is None else int(report_steps)
+    dt = float(sim["dt"])
     rids = sorted(world_paths.keys())
     stall_scenarios: List[Dict[str, Tuple[int, int]]] = []
     for trial_idx in range(num_trials):
@@ -600,39 +668,85 @@ def run_perturbation_experiment(
         "ADG_LinearMPC",
         "LinearMPC_CBF",
         "ConsensusMPC",
+        "ConsensusMPC_Corridor",
     )
     summary_rows: List[Dict[str, Any]] = []
 
     for m in methods:
         coll_list: List[int] = []
         min_d_list: List[float] = []
-        succ_list: List[float] = []
-        mk_list: List[float] = []
+        obs_contact_list: List[int] = []
+        min_obs_list: List[float] = []
+        finish_times_s: List[float] = []
+        n_agents = 0
+        done_report = 0
+        done_full = 0
+        all_done_makespans: List[float] = []
         for trial_idx, stall_map in enumerate(stall_scenarios):
             res = simulate_controller(
                 m,
                 world_paths,
                 priorities,
                 ecbs_paths=ecbs_paths,
-                steps=335,
+                steps=steps,
                 seed=100 + trial_idx,
                 noise=0.015,
                 stall_windows=stall_map,
             )
             coll_list.append(int(res["collision_events"]))
             min_d_list.append(float(res["min_inter_robot_dist"]))
-            succ_list.append(float(res["two_stage_success_rate"]))
-            mk_list.append(float(res["makespan_s"]))
+            obs_contact_list.append(int(res["obstacle_contact_events"]))
+            min_obs_list.append(float(res["min_obstacle_clearance"]))
+            for rid, fin in res["finish_steps"].items():
+                n_agents += 1
+                if not res["completed"][rid]:
+                    continue
+                done_full += 1
+                if fin < report_steps:
+                    done_report += 1
+                if fin < steps:
+                    finish_times_s.append(fin * dt)
+            if all(res["completed"].values()):
+                all_done_makespans.append(float(res["makespan_s"]))
 
+        collision_free = sum(1 for c in coll_list if c == 0)
+        cf_lo, cf_hi = wilson_interval(collision_free, num_trials)
+        rep_lo, rep_hi = wilson_interval(done_report, n_agents)
+        full_lo, full_hi = wilson_interval(done_full, n_agents)
         summary_rows.append(
             {
                 "controller": m,
                 "trials": num_trials,
+                "agent_trials": n_agents,
                 "mean_collisions": round(float(np.mean(coll_list)), 2),
                 "max_collisions": int(np.max(coll_list)),
+                "collision_free_trials": collision_free,
+                "collision_free_ci95_low": round(cf_lo, 3),
+                "collision_free_ci95_high": round(cf_hi, 3),
                 "min_clearance_m": round(float(np.min(min_d_list)), 3),
-                "mean_two_stage_success_rate": round(float(np.mean(succ_list)), 3),
-                "mean_makespan_s": round(float(np.mean(mk_list)), 2),
+                "mean_obstacle_contacts": round(float(np.mean(obs_contact_list)), 2),
+                "min_obstacle_clearance_m": round(float(np.min(min_obs_list)), 3),
+                "completion_rate_report": round(done_report / n_agents, 3),
+                "completion_report_ci95_low": round(rep_lo, 3),
+                "completion_report_ci95_high": round(rep_hi, 3),
+                "completion_rate_full": round(done_full / n_agents, 3),
+                "completion_full_ci95_low": round(full_lo, 3),
+                "completion_full_ci95_high": round(full_hi, 3),
+                "report_horizon_s": round(report_steps * dt, 1),
+                "full_horizon_s": round(steps * dt, 1),
+                "finish_time_median_s": round(float(np.median(finish_times_s)), 2)
+                if finish_times_s
+                else float("nan"),
+                "finish_time_p90_s": round(float(np.percentile(finish_times_s, 90)), 2)
+                if finish_times_s
+                else float("nan"),
+                "finish_time_max_s": round(float(np.max(finish_times_s)), 2)
+                if finish_times_s
+                else float("nan"),
+                "trials_all_completed": len(all_done_makespans),
+                "mean_makespan_all_completed_s": round(float(np.mean(all_done_makespans)), 2)
+                if all_done_makespans
+                else float("nan"),
             }
         )
 
@@ -866,15 +980,19 @@ def main() -> int:
     grid = build_warehouse_grid(inflate_radius=1, cfg=cfg)
     _, waypoints, _, priorities, _ = get_fleet_mission(cfg)
 
-    ecbs_paths, _, planning_summary = run_planning_ablation(repeats=10)
+    ecbs_paths, _, planning_summary = run_planning_ablation(repeats=10, write_csv=False)
     world_paths, _ = optimize_corridor_bspline_paths(grid, ecbs_paths, waypoints, cfg)
 
-    print("=== [1/2] Running 6-Method Controller Ablation on 8-AGV Warehouse ===", flush=True)
-    control_results = run_control_ablation(world_paths, priorities, ecbs_paths=ecbs_paths, steps=305)
+    print("=== [1/2] Running 11-Variant Controller Ablation on 8-AGV Warehouse ===", flush=True)
+    control_results = run_control_ablation(
+        world_paths, priorities, ecbs_paths=ecbs_paths, steps=int(cfg["simulation"]["steps"])
+    )
     for name, res in control_results.items():
         print(
-            f"  {name:16s} | coll={res['collision_events']:2d} | "
+            f"  {name:22s} | coll={res['collision_events']:2d} | "
             f"min_d={res['min_inter_robot_dist']:5.2f}m | "
+            f"obs_contacts={res['obstacle_contact_events']:2d} | "
+            f"min_obs={res['min_obstacle_clearance']:6.3f}m | "
             f"2stage={res['two_stage_success_rate']*100:5.1f}% | "
             f"mk={res['makespan_s']:5.1f}s | "
             f"err={res['mean_nav_error']:5.2f}m | "
@@ -882,14 +1000,16 @@ def main() -> int:
             flush=True,
         )
 
-    print("\n=== [2/2] Running 20-Seed Randomized Delay & Perturbation Robustness Experiment ===", flush=True)
-    pert_rows = run_perturbation_experiment(world_paths, priorities, ecbs_paths, num_trials=20)
+    print("\n=== [2/2] Running Randomized Stall & Perturbation Robustness Experiment ===", flush=True)
+    pert_rows = run_perturbation_experiment(world_paths, priorities, ecbs_paths)
     for r in pert_rows:
         print(
-            f"  {r['controller']:16s} | mean_coll={r['mean_collisions']:4.2f} | "
+            f"  {r['controller']:22s} | mean_coll={r['mean_collisions']:4.2f} | "
+            f"coll_free={r['collision_free_trials']}/{r['trials']} | "
             f"min_clear={r['min_clearance_m']:5.2f}m | "
-            f"2stage_succ={r['mean_two_stage_success_rate']*100:5.1f}% | "
-            f"makespan={r['mean_makespan_s']:5.1f}s",
+            f"done@{r['report_horizon_s']}s={r['completion_rate_report']*100:5.1f}% | "
+            f"done@{r['full_horizon_s']}s={r['completion_rate_full']*100:5.1f}% | "
+            f"t_fin_p90={r['finish_time_p90_s']}s",
             flush=True,
         )
 

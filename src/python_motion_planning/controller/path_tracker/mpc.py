@@ -1,8 +1,9 @@
 """
 @file: mpc.py
-@description: Linearized Error-State Model Predictive Control (MPC via OSQP with persistent workspace update),
-              Strict Distributed Control Barrier Function Quadratic Program (CBF-QP) Safety Filter,
-              Arc-Length Action Dependency Graph (ADG) Schedule Synchronization, and Non-Holonomic ORCA Baseline.
+@description: Linearized Error-State Model Predictive Control (MPC via OSQP with persistent workspace update
+              and optional lateral safe-corridor constraints), Velocity-Level Distributed Control Barrier
+              Function Quadratic Program (CBF-QP) Safety Filter, Arc-Length Action Dependency Graph (ADG)
+              Schedule Synchronization, and Non-Holonomic ORCA Baseline.
 @references:
     [1] Kuhne, F., Lages, W. F., & Gomes da Silva Jr, J. M. (2004). Model Predictive Control
         of a Mobile Robot Using Linearization. Proc. Mechatronics and Robotics, 525-530.
@@ -76,11 +77,15 @@ def _osqp_solve(
     return prob.solve(raise_error=False) if _OSQP_V1 else prob.solve()
 
 
-class _Fast2DQPWorkspace:
+class QP2DWorkspace:
     """
     Persistent 2-variable OSQP workspace (`u in R^2`, up to `max_rows` linear constraints)
     that calls `prob.setup(...)` once and uses `prob.update(Px=..., q=..., Ax=..., l=..., u=...)`
     on subsequent calls to eliminate Python/C setup overhead.
+
+    Each controller instance must own its workspace: OSQP warm-starts from the previous solution
+    stored in the workspace, so sharing one workspace across agents (or across simulation runs)
+    makes results depend on call order.
     """
 
     def __init__(self, max_rows: int = 12, eps: float = 1e-5) -> None:
@@ -148,8 +153,37 @@ class _Fast2DQPWorkspace:
         return self.prob.solve(raise_error=False) if _OSQP_V1 else self.prob.solve()
 
 
-_CBF_WS = _Fast2DQPWorkspace(max_rows=12, eps=1e-5)
-_ORCA_WS = _Fast2DQPWorkspace(max_rows=12, eps=1e-4)
+def obstacle_surface_distance(
+    grid: Grid, xy: Sequence[float], max_dist: float = float("inf")
+) -> float:
+    """
+    Exact Euclidean distance from world point `xy` to the boundary of the nearest OBSTACLE cell
+    (`0.0` if `xy` lies inside an obstacle cell or outside the grid). INFLATION cells count as free.
+    When the ESDF lower bound already exceeds `max_dist`, that lower bound is returned instead of
+    scanning the neighbourhood, so the result is only exact below `max_dist`.
+    """
+    x, y = float(xy[0]), float(xy[1])
+    cell = grid.world_to_map((x, y))
+    if not grid.within_bounds(cell) or int(grid.type_map[cell]) == TYPES.OBSTACLE:
+        return 0.0
+    res = float(grid.resolution)
+    half_diag = 0.5 * math.sqrt(2.0) * res
+    cx, cy = grid.map_to_world(cell)
+    offset = math.hypot(x - cx, y - cy)
+    esdf_c = float(grid.esdf[cell])
+    lower = esdf_c - half_diag - offset
+    if lower >= max_dist:
+        return lower
+    reach = int(math.ceil((esdf_c + offset + half_diag) / res)) + 1
+    half = 0.5 * res
+    best = float("inf")
+    for i in range(cell[0] - reach, cell[0] + reach + 1):
+        for j in range(cell[1] - reach, cell[1] + reach + 1):
+            if not grid.within_bounds((i, j)) or int(grid.type_map[i, j]) != TYPES.OBSTACLE:
+                continue
+            ox, oy = grid.map_to_world((i, j))
+            best = min(best, math.hypot(max(abs(x - ox) - half, 0.0), max(abs(y - oy) - half, 0.0)))
+    return best
 
 
 def unicycle_to_lookahead_point(pose: np.ndarray, lookahead_l: float = 0.14) -> np.ndarray:
@@ -214,9 +248,10 @@ def cbf_qp_filter(
     theta: Optional[float] = None,
     lookahead_l: float = 0.14,
     omega_max: Optional[float] = None,
+    workspace: Optional[QP2DWorkspace] = None,
 ) -> Tuple[np.ndarray, Dict[str, float]]:
     """
-    Strict Distributed Control Barrier Function Quadratic Program (CBF-QP) safety filter
+    Velocity-level distributed Control Barrier Function Quadratic Program (CBF-QP) safety filter
     (Wang, Ames, & Egerstedt, IEEE T-RO 2017):
 
         min_{u in R^2}  ||u - u_nom||_2^2
@@ -224,14 +259,19 @@ def cbf_qp_filter(
 
     Actuation bounds inside the QP:
       - If `theta` and `omega_max` are provided (unicycle NID mode), the exact linear unicycle
-        bounds are enforced directly inside the QP:
+        velocity bounds are enforced directly inside the QP:
             0 <= [cos(theta), sin(theta)] u <= u_max
             -omega_max <= [-sin(theta)/l, cos(theta)/l] u <= omega_max
         so that `[v, omega]^T = diag(1, 1/l) R(theta)^T u` satisfies `0 <= v <= u_max` and
-        `|omega| <= omega_max` without post-clipping or post-blending.
+        `|omega| <= omega_max` at the velocity-command level without post-clipping or post-blending.
+        (Note: closed-loop execution in `DiffDriveRobot` tracks velocity commands via bounded
+        accelerations at discrete step `dt`, which is not modeled in this first-order kinematic QP.)
       - Otherwise (single-integrator mode), enforces `-u_max <= u_x, u_y <= u_max`.
 
-    If the strict QP is infeasible, returns `zeros(2)` (`v = 0, omega = 0`, safe stop).
+    If the QP is infeasible, returns `zeros(2)` (`v = 0, omega = 0`, zero velocity command).
+
+    Pass a per-controller `workspace` (`QP2DWorkspace`) to reuse the OSQP setup across control
+    steps; without one, a fresh OSQP problem is set up for this call only.
     """
     t0 = time.perf_counter()
     p_i = np.asarray(p_i, dtype=float)[:2]
@@ -308,7 +348,18 @@ def cbf_qp_filter(
             "min_h": min_h,
         }
 
-    res = _CBF_WS.solve(M_metric, q, A_dense, lb_arr, ub_arr)
+    if workspace is not None:
+        res = workspace.solve(M_metric, q, A_dense, lb_arr, ub_arr)
+    else:
+        res = _osqp_solve(
+            P=sp.csc_matrix(2.0 * M_metric),
+            q=q,
+            A=sp.csc_matrix(A_dense),
+            lb=lb_arr,
+            ub=ub_arr,
+            eps=1e-5,
+            polish=False,
+        )
     wall_us = (time.perf_counter() - t0) * 1e6
     c_solve_us = float(getattr(res.info, "solve_time", 0.0)) * 1e6
 
@@ -508,9 +559,14 @@ class MPC(PathTracker):
          `(x_{r,k}, y_{r,k}, theta_{r,k}, v_{r,k}, omega_{r,k})` along cumulative arc-length `s`.
       2. Linearizes the discrete-time unicycle error dynamics around the reference window:
              e_{k+1} = A_k e_k + B_k u_tilde_k
-      3. Updates the pre-allocated `2N`-variable OSQP workspace via `update(Px, q, l, u)` and
-         returns the pure optimal first-step control `u_0 = u_{r,0} + u_tilde_0` (no post-QP
-         steering blending or heuristic overrides).
+      3. Optionally (`use_corridor=True`) bounds the predicted lateral offset from each reference
+         point by the obstacle-free half-width around the reference path
+         (`|n_k^T (p_k - p_{r,k})| <= d_k + s_k`), with one non-negative slack `s_k` per step
+         penalized by `w_corridor * s_k^2` so the QP stays feasible when the robot already starts
+         outside the corridor. With `use_corridor=False` the slack rows are unbounded and inactive.
+      4. Updates the pre-allocated `3N`-variable OSQP workspace (`2N` input offsets + `N` slacks)
+         via `update(Px, q, Ax, l, u)` and returns the pure optimal first-step control
+         `u_0 = u_{r,0} + u_tilde_0` (no post-QP steering blending or heuristic overrides).
     """
 
     def __init__(
@@ -523,6 +579,9 @@ class MPC(PathTracker):
         r_omega: float = 0.025,
         r_smooth: float = 0.02,
         w_esdf: float = 0.0,
+        use_corridor: bool = False,
+        w_corridor: float = 400.0,
+        corridor_margin: float = 0.05,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -533,6 +592,9 @@ class MPC(PathTracker):
         self.r_omega = float(r_omega)
         self.r_smooth = float(r_smooth)
         self.w_esdf = float(w_esdf)
+        self.use_corridor = bool(use_corridor)
+        self.w_corridor = float(w_corridor)
+        self.corridor_margin = float(corridor_margin)
         self.prev_cmd = np.zeros(2, dtype=float)
         self._path_array = (
             np.asarray(self.path, dtype=float)
@@ -546,10 +608,13 @@ class MPC(PathTracker):
         else:
             self._path_s = np.zeros(len(self._path_array), dtype=float)
         self._progress_s = 0.0
+        self._path_clearance = self._precompute_path_clearance()
+        self._ref_s = np.zeros(self.horizon_steps, dtype=float)
 
         # Precompute constant matrices and persistent OSQP workspace for 2N variables
         N = self.horizon_steps
         n_vars = 2 * N
+        n_qp = 3 * N
         q_diag = np.tile([self.q_pos, self.q_pos, self.q_theta], N)
         q_diag[-3:] *= 1.5
         self._Q_bar = np.diag(q_diag)
@@ -566,18 +631,28 @@ class MPC(PathTracker):
             + 1e-6 * np.eye(n_vars, dtype=float)
         )
 
-        # Column-major upper-triangular index mapping for OSQP `update(Px=...)`
-        self._cols_cm, self._rows_cm = np.tril_indices(n_vars)
-        H_init = np.eye(n_vars, dtype=float) + 1e-4 * np.ones((n_vars, n_vars), dtype=float)
-        P_init = sp.triu(2.0 * H_init, format="csc")
-        A_init = sp.eye(n_vars, format="csc")
+        # Fixed sparsity patterns: P = blkdiag(triu(2H), 2 w_corridor I_N);
+        # A rows = [input bounds (2N); slack >= 0 (N); lateral upper (N); lateral lower (N)]
+        p_mask = np.zeros((n_qp, n_qp), dtype=bool)
+        p_mask[:n_vars, :n_vars] = np.triu(np.ones((n_vars, n_vars), dtype=bool))
+        p_mask[np.arange(n_vars, n_qp), np.arange(n_vars, n_qp)] = True
+        a_mask = np.zeros((5 * N, n_qp), dtype=bool)
+        a_mask[np.arange(n_vars), np.arange(n_vars)] = True
+        a_mask[np.arange(n_vars, n_qp), np.arange(n_vars, n_qp)] = True
+        for k in range(N):
+            for row in (3 * N + k, 4 * N + k):
+                a_mask[row, : 2 * (k + 1)] = True
+                a_mask[row, n_vars + k] = True
+        P_init, self._p_rows, self._p_cols = self._csc_from_mask(p_mask)
+        A_init, self._a_rows, self._a_cols = self._csc_from_mask(a_mask)
+        self._n_qp = n_qp
         self._mpc_osqp = osqp.OSQP()
         setup_kwargs = {
             "P": P_init,
-            "q": np.zeros(n_vars, dtype=float),
+            "q": np.zeros(n_qp, dtype=float),
             "A": A_init,
-            "l": -np.ones(n_vars, dtype=float),
-            "u": np.ones(n_vars, dtype=float),
+            "l": -np.ones(5 * N, dtype=float),
+            "u": np.ones(5 * N, dtype=float),
             "verbose": False,
             "eps_abs": 1e-4,
             "eps_rel": 1e-4,
@@ -598,6 +673,9 @@ class MPC(PathTracker):
         self.solve_times_us: List[float] = []
         self.wall_times_us: List[float] = []
         self._warm_x: Optional[np.ndarray] = None
+        self.last_corridor_half_widths: np.ndarray = np.full(N, np.inf)
+        self.last_corridor_slack: float = 0.0
+        self.corridor_active_steps: int = 0
 
     def __str__(self) -> str:
         return "Linear-MPC (OSQP)"
@@ -613,6 +691,69 @@ class MPC(PathTracker):
         self.solve_times_us.clear()
         self.wall_times_us.clear()
         self._warm_x = None
+        self.last_corridor_half_widths = np.full(self.horizon_steps, np.inf)
+        self.last_corridor_slack = 0.0
+        self.corridor_active_steps = 0
+
+    @staticmethod
+    def _csc_from_mask(mask: np.ndarray) -> Tuple[sp.csc_matrix, np.ndarray, np.ndarray]:
+        """
+        Build a CSC matrix whose sparsity pattern is exactly `mask` (entries stored even if their
+        later values are zero) and return the `(row, col)` index of every stored entry in CSC order,
+        so that `full[rows, cols]` gives the `Px` / `Ax` vector expected by `osqp.update()`.
+        """
+        rows, cols = np.nonzero(mask)
+        mat = sp.csc_matrix(
+            (np.ones(len(rows), dtype=float), (rows, cols)), shape=mask.shape
+        )
+        mat.sort_indices()
+        col_idx = np.repeat(np.arange(mask.shape[1]), np.diff(mat.indptr))
+        return mat, mat.indices.copy(), col_idx
+
+    def _precompute_path_clearance(self) -> np.ndarray:
+        """Exact obstacle surface distance at every reference path sample (`inf` if no corridor)."""
+        n_pts = len(self._path_array)
+        if not self.use_corridor or self.obstacle_grid is None or n_pts == 0:
+            return np.full(n_pts, np.inf)
+        radius = float(getattr(self.robot_model, "radius", 0.0))
+        cap = radius + self.corridor_margin + 2.0
+        return np.array(
+            [
+                obstacle_surface_distance(self.obstacle_grid, p[:2], max_dist=cap)
+                for p in self._path_array
+            ],
+            dtype=float,
+        )
+
+    def corridor_half_widths(self, s_values: np.ndarray) -> np.ndarray:
+        """
+        Lateral half-width available to the robot center at the reference points with arc-length
+        `s_values`. A reference point at fraction `t` of a path segment `[a, b]` of length `L` is at
+        least `max(c_a - t L, c_b - (1 - t) L)` away from any obstacle (distance is 1-Lipschitz),
+        where `c_a`, `c_b` are the exact obstacle distances at the segment endpoints. The robot
+        radius and `corridor_margin` are subtracted; `inf` is returned when the corridor is disabled.
+        """
+        s_values = np.asarray(s_values, dtype=float)
+        if not self.use_corridor or self.obstacle_grid is None or len(self._path_clearance) == 0:
+            return np.full(len(s_values), np.inf)
+        radius = float(getattr(self.robot_model, "radius", 0.0))
+        s_arr = self._path_s
+        out = np.empty(len(s_values), dtype=float)
+        for k, s_k in enumerate(s_values):
+            if len(s_arr) == 1 or s_k <= s_arr[0]:
+                clear = self._path_clearance[0]
+            elif s_k >= s_arr[-1]:
+                clear = self._path_clearance[-1]
+            else:
+                i = int(np.searchsorted(s_arr, s_k, side="right")) - 1
+                i = max(0, min(len(s_arr) - 2, i))
+                seg = float(s_arr[i + 1] - s_arr[i])
+                d_a = float(s_k - s_arr[i])
+                clear = max(
+                    self._path_clearance[i] - d_a, self._path_clearance[i + 1] - (seg - d_a)
+                )
+            out[k] = max(0.0, clear - radius - self.corridor_margin)
+        return out
 
     def compute_frenet_state(
         self, pos: np.ndarray, theta: float
@@ -709,6 +850,7 @@ class MPC(PathTracker):
         ref_window = np.zeros((self.horizon_steps, 3), dtype=float)
         for k in range(self.horizon_steps):
             s_k = min(s_limit, self._progress_s + (k + 1) * step_ds)
+            self._ref_s[k] = s_k
             ref_window[k] = self._interpolate_at_s(s_k)
 
         lookahead_s = min(
@@ -877,15 +1019,42 @@ class MPC(PathTracker):
             lb[2 * k + 1] = -self.max_ang_speed - u_ref[k, 1]
             ub[2 * k + 1] = self.max_ang_speed - u_ref[k, 1]
 
-        P_two = 2.0 * H
-        q_vec = 2.0 * g
+        n_vars = 2 * N
+        n_qp = self._n_qp
+        P_full = np.zeros((n_qp, n_qp), dtype=float)
+        P_full[:n_vars, :n_vars] = 2.0 * H
+        P_full[n_vars:, n_vars:] = 2.0 * self.w_corridor * np.eye(N, dtype=float)
+        q_full = np.concatenate([2.0 * g, np.zeros(N, dtype=float)])
+
+        A_full = np.zeros((5 * N, n_qp), dtype=float)
+        A_full[:n_vars, :n_vars] = np.eye(n_vars, dtype=float)
+        A_full[n_vars:n_qp, n_vars:] = np.eye(N, dtype=float)
+        l_full = np.concatenate([lb, np.zeros(N), np.full(2 * N, -np.inf)])
+        u_full = np.concatenate([ub, np.full(3 * N, np.inf)])
+        half_widths = self.corridor_half_widths(self._ref_s)
+        for k in range(N):
+            th_r = float(ref_window[k, 2])
+            n_k = np.array([-math.sin(th_r), math.cos(th_r)], dtype=float)
+            a_k = n_k @ Gamma[3 * k : 3 * k + 2, :]
+            c_k = float(n_k @ e_free[3 * k : 3 * k + 2])
+            up, lo = 3 * N + k, 4 * N + k
+            A_full[up, :n_vars] = a_k
+            A_full[up, n_vars + k] = -1.0
+            A_full[lo, :n_vars] = a_k
+            A_full[lo, n_vars + k] = 1.0
+            if math.isfinite(half_widths[k]):
+                u_full[up] = half_widths[k] - c_k
+                l_full[lo] = -half_widths[k] - c_k
+        self.last_corridor_half_widths = half_widths
+
         self._mpc_osqp.update(
-            Px=P_two[self._rows_cm, self._cols_cm],
-            q=q_vec,
-            l=lb,
-            u=ub,
+            Px=P_full[self._p_rows, self._p_cols],
+            q=q_full,
+            Ax=A_full[self._a_rows, self._a_cols],
+            l=l_full,
+            u=u_full,
         )
-        if self._warm_x is not None and len(self._warm_x) == 2 * N:
+        if self._warm_x is not None and len(self._warm_x) == n_qp:
             self._mpc_osqp.warm_start(x=self._warm_x)
 
         res = self._mpc_osqp.solve(raise_error=False) if _OSQP_V1 else self._mpc_osqp.solve()
@@ -899,11 +1068,24 @@ class MPC(PathTracker):
         self.last_iter = int(res.info.iter)
 
         if res.info.status_val in (1, 2) and res.x is not None:
-            u_tilde = np.clip(np.asarray(res.x, dtype=float), lb, ub)
-            self._warm_x = np.concatenate([u_tilde[2:], u_tilde[-2:]])
+            x_sol = np.asarray(res.x, dtype=float)
+            u_tilde = np.clip(x_sol[:n_vars], lb, ub)
+            slack = np.maximum(x_sol[n_vars:], 0.0)
+            self._warm_x = np.concatenate([u_tilde[2:], u_tilde[-2:], np.zeros(N)])
             u_seq = u_ref + u_tilde.reshape(N, 2)
+            self.last_corridor_slack = float(np.max(slack))
+            finite = np.isfinite(half_widths)
+            if np.any(finite):
+                lat = (A_full[3 * N : 4 * N, :n_vars] @ u_tilde)[finite]
+                margin = min(
+                    float(np.min(u_full[3 * N : 4 * N][finite] - lat)),
+                    float(np.min(lat - l_full[4 * N : 5 * N][finite])),
+                )
+                if margin < 1e-3 or self.last_corridor_slack > 1e-4:
+                    self.corridor_active_steps += 1
         else:
             u_seq = u_ref.copy()
+            self.last_corridor_slack = 0.0
 
         # Pure OSQP MPC first-step control (zero post-blending or heuristic steering override)
         v_qp = float(np.clip(u_seq[0, 0], 0.0, v_cap))
@@ -937,10 +1119,11 @@ class ConsensusMPC(MPC):
     """
     Multi-Agent Cooperative Trajectory Tracker combining:
       1. Optional Arc-Length Action Dependency Graph (`adg`) schedule synchronization,
-      2. Priority-weighted velocity consensus + Linearized Error-State OSQP MPC (`MPC`),
-      3. Optional Strict Distributed Control Barrier Function Quadratic Program (`cbf_qp_filter`,
+      2. Priority-weighted velocity consensus + Linearized Error-State OSQP MPC (`MPC`, with
+         optional lateral safe-corridor constraints `use_corridor=True`),
+      3. Optional Velocity-Level Distributed Control Barrier Function Quadratic Program (`cbf_qp_filter`,
          Wang et al., 2017) via Near-Identity Diffeomorphism (`lookahead_l`) with exact linear
-         unicycle bounds inside the QP and full `2 * lookahead_l` clearance compensation.
+         unicycle velocity bounds inside the QP and full `2 * lookahead_l` clearance compensation.
     """
 
     def __init__(
@@ -978,6 +1161,7 @@ class ConsensusMPC(MPC):
         self.consensus_gain = float(consensus_gain)
         self.last_cbf_min_h: float = float("inf")
         self.last_cbf_status: float = 1.0
+        self._cbf_ws = QP2DWorkspace(max_rows=12, eps=1e-5) if self.use_cbf else None
 
     def _is_lower_priority_than(self, peer_id: str) -> bool:
         """
@@ -1086,13 +1270,13 @@ class ConsensusMPC(MPC):
         self, pose: np.ndarray, v_nom: float, w_nom: float
     ) -> Tuple[float, float]:
         """
-        Filter the nominal unicycle command `(v_nom, w_nom)` through the strict distributed CBF-QP
-        (`cbf_qp_filter`) using Near-Identity Diffeomorphism:
+        Filter the nominal unicycle command `(v_nom, w_nom)` through the velocity-level distributed
+        CBF-QP (`cbf_qp_filter`) using Near-Identity Diffeomorphism:
           - Includes ALL peers within `self.sensing_radius` (no heuristic lane skipping).
           - Uses peer `j`'s true lookahead point velocity `p_dot_j = R(theta_j) diag(1, l) [v_j, w_j]^T`.
           - Adds `2 * lookahead_l` to `d_safe` so lookahead safety implies center-to-center safety.
           - Enforces `0 <= v <= v_max` and `|omega| <= omega_max` directly inside the QP linear constraints
-            and returns the exact inverse-NID command `(v_safe, w_safe)` without post-blending.
+            and returns the exact inverse-NID velocity command `(v_safe, w_safe)` without post-blending.
         """
         if not self.use_cbf or not self.peer_robots:
             return v_nom, w_nom
@@ -1151,6 +1335,7 @@ class ConsensusMPC(MPC):
             theta=theta_i,
             lookahead_l=self.lookahead_l,
             omega_max=self.max_ang_speed,
+            workspace=self._cbf_ws,
         )
         self.last_solve_time_us += cbf_info["solve_time_us"]
         self.last_wall_time_us += cbf_info["wall_time_us"]
@@ -1236,6 +1421,7 @@ class ORCAController(MPC):
         self.time_horizon = float(time_horizon)
         self.safe_margin = float(safe_margin)
         self.lookahead_l = float(lookahead_l)
+        self._orca_ws = QP2DWorkspace(max_rows=12, eps=1e-4)
 
     def __str__(self) -> str:
         return "ADG+ORCA" if self.adg is not None else "ORCA"
@@ -1380,7 +1566,7 @@ class ORCAController(MPC):
             rho_w = 0.85
             M_metric = np.outer(r_v, r_v) + rho_w * np.outer(r_w, r_w) + 1e-6 * np.eye(2)
             q = -2.0 * (M_metric @ v_pref)
-            res = _ORCA_WS.solve(M_metric, q, A_dense, lb_arr, ub_arr)
+            res = self._orca_ws.solve(M_metric, q, A_dense, lb_arr, ub_arr)
             wall_us = (time.perf_counter() - t_orca) * 1e6
             c_solve_us = float(getattr(res.info, "solve_time", 0.0)) * 1e6
             self.last_solve_time_us = c_solve_us if c_solve_us > 0.0 else wall_us

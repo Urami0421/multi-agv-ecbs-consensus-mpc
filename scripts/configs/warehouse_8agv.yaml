@@ -40,15 +40,19 @@ trajectory:
 simulation:
   dt: 0.1
   steps: 305
+  perturbation_steps: 600
+  perturbation_report_steps: 335
+  perturbation_trials: 20
   robot_radius: 0.44
   max_lin_speed: 2.6
   max_ang_speed: 3.14
   goal_dist_tol: 0.70
-  stage_reach_tol: 1.15
-  sensing_radius: 9.5
-  safe_margin: 0.45
-  cbf_gamma: 1.6
-  lookahead_l: 0.20
+  pickup_reach_tol: 1.65
+  delivery_reach_tol: 0.95
+  sensing_radius: 3.0
+  safe_margin: 0.02
+  cbf_gamma: 2.2
+  lookahead_l: 0.04
 
 agents:
   "1":
